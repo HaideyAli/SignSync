@@ -81,9 +81,9 @@ class TransformerClassifier(nn.Module):
 
 
 # Returns the right model given an arch string — used by train.py and evaluate.py
-def build_model(arch: str) -> nn.Module:
+def build_model(arch: str, num_classes: int = NUM_CLASSES) -> nn.Module:
     if arch == "lstm":
-        return LSTMClassifier()
+        return LSTMClassifier(num_classes=num_classes)
     if arch == "transformer":
-        return TransformerClassifier()
+        return TransformerClassifier(num_classes=num_classes)
     raise ValueError(f"Unknown arch '{arch}'. Choose 'lstm' or 'transformer'.")

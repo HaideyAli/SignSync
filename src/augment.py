@@ -49,12 +49,10 @@ def mirror_hands(seq: np.ndarray) -> np.ndarray:
     return result
 
 
-# Applies a random combination of augmentations — each one fires independently with p=0.5
+# Applies noise and temporal shift — mirror removed as it creates invalid ASL signs
 def augment_sequence(seq: np.ndarray) -> np.ndarray:
     if np.random.random() < 0.5:
-        seq = add_noise(seq)
+        seq = add_noise(seq, std=0.005)
     if np.random.random() < 0.5:
         seq = temporal_shift(seq)
-    if np.random.random() < 0.5:
-        seq = mirror_hands(seq)
     return seq
