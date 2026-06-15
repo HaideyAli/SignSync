@@ -1,0 +1,23 @@
+# Phase 1 — Data pipeline
+mediapipe>=0.10.0
+opencv-python>=4.8.0
+numpy>=1.24.0,<2.0.0
+kaggle>=1.5.0
+tqdm>=4.65.0
+
+# Phase 2 — Model training
+# PyTorch: install separately at https://pytorch.org/get-started/locally/
+# for CPU: pip install torch torchvision
+# for CUDA (recommended — use Colab if no GPU): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+torchvision>=0.16.0
+wandb>=0.16.0
+
+# Phase 3 — Inference (no extra deps)
+
+# Phase 4 — Desktop app + Zoom bridge
+customtkinter>=5.2.0
+requests>=2.31.0
+
+# Phase 5 — Demo
+gradio>=4.0.0

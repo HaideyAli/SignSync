@@ -1,0 +1,40 @@
+# Claude (local only — never commit)
+CLAUDE.md
+.claude/
+
+# Virtual environment
+.venv/
+
+# Dataset — videos, landmarks, and model files are too large for git
+data/raw/
+data/landmarks/
+data/models/
+
+# Trained model checkpoints
+checkpoints/
+*.pth
+*.pt
+
+# Training logs
+wandb/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# API keys and secrets
+.env
+.env.*
+*.kaggle/
+kaggle.json
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
