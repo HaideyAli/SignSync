@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, Subset
 from pathlib import Path
 
 SEQ_LEN = 30
@@ -20,8 +20,10 @@ class ASLDataset(Dataset):
     def __init__(self,
                  landmarks_dir: str = "data/landmarks",
                  labels_path: str = "data/labels.json",
-                 seq_len: int = SEQ_LEN):
+                 seq_len: int = SEQ_LEN,
+                 augment: bool = False):
         self.seq_len = seq_len
+        self.augment = augment
         self.landmarks_dir = Path(landmarks_dir)
 
         with open(labels_path) as f:
@@ -29,8 +31,6 @@ class ASLDataset(Dataset):
 
         self.samples: list[tuple[Path, int]] = []
         for npy_file in sorted(self.landmarks_dir.glob("*.npy")):
-            # filename format: {word}_{0001}.npy
-            # strip the last underscore-separated token (the 4-digit index)
             word = "_".join(npy_file.stem.split("_")[:-1])
             if word in self.label_map:
                 self.samples.append((npy_file, self.label_map[word]))
@@ -44,6 +44,9 @@ class ASLDataset(Dataset):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
         seq = self._pad_or_trim(seq)              # (seq_len, 258)
+        if self.augment:
+            from augment import augment_sequence
+            seq = augment_sequence(seq)
         return torch.from_numpy(seq), label
 
     # Forces every sequence to exactly 30 frames — trims if too long, adds zero rows if too short
@@ -56,27 +59,29 @@ class ASLDataset(Dataset):
 
 
 # Splits the dataset into train/val and wraps both in DataLoaders ready for the training loop
+# Augmentation is applied to train only — val always sees clean unmodified sequences
 def create_dataloaders(
     landmarks_dir: str = "data/landmarks",
     labels_path: str = "data/labels.json",
     batch_size: int = 32,
     val_split: float = 0.15,
     seed: int = 42,
+    augment: bool = False,
 ) -> tuple[DataLoader, DataLoader, dict]:
     """Return (train_loader, val_loader, label_map)."""
-    dataset = ASLDataset(landmarks_dir, labels_path)
+    # Build index split using a seeded permutation so train/val are always the same samples
+    base   = ASLDataset(landmarks_dir, labels_path)
+    n      = len(base)
+    val_n  = int(n * val_split)
+    perm   = torch.randperm(n, generator=torch.Generator().manual_seed(seed)).tolist()
+    train_idx, val_idx = perm[val_n:], perm[:val_n]
 
-    val_size = int(len(dataset) * val_split)
-    train_size = len(dataset) - val_size
-
-    generator = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = random_split(dataset, [train_size, val_size],
-                                    generator=generator)
+    # Two separate dataset instances so augment can differ between train and val
+    train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment), train_idx)
+    val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False),   val_idx)
 
     # num_workers=0 required on Windows
-    train_loader = DataLoader(train_ds, batch_size=batch_size,
-                              shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=batch_size,
-                            shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=0)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=0)
 
-    return train_loader, val_loader, dataset.label_map
+    return train_loader, val_loader, base.label_map
