@@ -80,8 +80,16 @@ def create_dataloaders(
     train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment), train_idx)
     val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False),   val_idx)
 
-    # num_workers=0 required on Windows
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=0)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=0)
+    # Weighted sampler so rare classes aren't drowned out by common ones
+    label_counts: dict[int, int] = {}
+    for idx in train_idx:
+        _, lbl = base.samples[idx]
+        label_counts[lbl] = label_counts.get(lbl, 0) + 1
+    weights = [1.0 / label_counts[base.samples[i][1]] for i in train_idx]
+    sampler = torch.utils.data.WeightedRandomSampler(weights, num_samples=len(train_idx), replacement=True)
+
+    # num_workers=0 required on Windows; sampler is mutually exclusive with shuffle
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, num_workers=0)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,   num_workers=0)
 
     return train_loader, val_loader, base.label_map
