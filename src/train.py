@@ -38,7 +38,10 @@ def run_epoch(model, loader, criterion, optimizer=None):
             logits = model(seqs)
             loss   = criterion(logits, labels)
             if training:
-                optimizer.zero_grad(); loss.backward(); optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
             total_loss += loss.item() * len(labels)
             correct    += (logits.argmax(1) == labels).sum().item()
             total      += len(labels)
@@ -75,14 +78,14 @@ def main():
 
     model     = build_model(args.arch, num_classes=args.num_classes).to(DEVICE)
     criterion = FocalLoss(gamma=1.0, label_smoothing=0.1)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     print(f"Training {args.arch.upper()} | {DEVICE} | "
           f"{len(train_loader.dataset)} train / {len(val_loader.dataset)} val")
 
     if not args.debug:
-        wandb.init(project="SignBridge", name=f"{args.arch}_{args.num_classes}class_v2",
+        wandb.init(project="SignBridge", name=f"{args.arch}_{args.num_classes}class_v4",
                    config=vars(args))
 
     best_acc, no_improve = 0.0, 0
