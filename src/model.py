@@ -51,7 +51,7 @@ class PositionalEncoding(nn.Module):
 
 class TransformerClassifier(nn.Module):
     # Projects landmarks into embedding space, adds position info, applies attention, classifies
-    def __init__(self, input_dim=INPUT_DIM, d_model=256, nhead=8,
+    def __init__(self, input_dim=INPUT_DIM, d_model=128, nhead=4,
                  num_layers=2, num_classes=NUM_CLASSES, dropout=0.3):
         super().__init__()
         self.input_proj   = nn.Linear(input_dim, d_model)
@@ -59,7 +59,7 @@ class TransformerClassifier(nn.Module):
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead,
-            dim_feedforward=512, dropout=dropout,
+            dim_feedforward=256, dropout=dropout,
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)

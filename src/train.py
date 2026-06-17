@@ -74,7 +74,7 @@ def main():
     )
 
     model     = build_model(args.arch, num_classes=args.num_classes).to(DEVICE)
-    criterion = FocalLoss(gamma=2.0, label_smoothing=0.1)
+    criterion = FocalLoss(gamma=1.0, label_smoothing=0.1)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 

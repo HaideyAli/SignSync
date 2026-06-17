@@ -15,16 +15,19 @@ _RIGHT_HIP = 126 + 24 * 4   # 222
 
 
 def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
-    """Translate every frame so the torso centre (mean of hips) is at origin."""
-    left_hip  = seq[:, _LEFT_HIP  : _LEFT_HIP  + 3]   # (T, 3)
-    right_hip = seq[:, _RIGHT_HIP : _RIGHT_HIP + 3]
-    centre    = ((left_hip + right_hip) / 2.0)         # (T, 3)
+    """Translate every frame so the torso centre (mean of hips) is at origin.
+    Skips frames where both hips are missing (all zeros = undetected)."""
+    left_hip  = seq[:, _LEFT_HIP  : _LEFT_HIP  + 3].copy()   # (T, 3)
+    right_hip = seq[:, _RIGHT_HIP : _RIGHT_HIP + 3].copy()
+    centre    = (left_hip + right_hip) / 2.0                  # (T, 3)
+
+    # Mask frames where hips were not detected (both near zero)
+    detected = (np.abs(left_hip).sum(axis=1) + np.abs(right_hip).sum(axis=1)) > 1e-6
+    centre[~detected] = 0.0   # no-op for those frames
 
     result = seq.copy()
-    # Subtract centre from hand x,y,z (every group of 3 in 0:126)
     for i in range(0, 126, 3):
         result[:, i:i+3] -= centre
-    # Subtract centre from pose x,y,z only (skip visibility — every 4th value)
     for i in range(126, 258, 4):
         result[:, i:i+3] -= centre
 
@@ -32,9 +35,10 @@ def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
 
 
 def compute_velocity(seq: np.ndarray) -> np.ndarray:
-    """Append frame-to-frame deltas to each frame. Output shape: (T, 516)."""
+    """Append frame-to-frame deltas. Must be called BEFORE zero-padding
+    so padded frames don't create spurious velocity spikes. Output: (T, 516)."""
     delta = np.zeros_like(seq)
-    delta[1:] = seq[1:] - seq[:-1]   # frame[0] delta stays zero
+    delta[1:] = seq[1:] - seq[:-1]
     return np.concatenate([seq, delta], axis=1).astype(np.float32)
 
 
@@ -64,19 +68,19 @@ class ASLDataset(Dataset):
     def __getitem__(self, idx: int):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
-        seq = self._pad_or_trim(seq)              # (30, 258)
-        seq = normalise_landmarks(seq)            # centre on torso
+        seq = normalise_landmarks(seq)            # centre on torso (before padding)
         if self.augment:
             from augment import augment_sequence
             seq = augment_sequence(seq)
-        seq = compute_velocity(seq)               # (30, 516)
+        seq = compute_velocity(seq)               # (T, 516) — before padding so no spike at boundary
+        seq = self._pad_or_trim(seq)              # (30, 516)
         return torch.from_numpy(seq), label
 
     def _pad_or_trim(self, seq: np.ndarray) -> np.ndarray:
         T = seq.shape[0]
         if T >= self.seq_len:
             return seq[: self.seq_len]
-        pad = np.zeros((self.seq_len - T, NUM_VALUES), dtype=np.float32)
+        pad = np.zeros((self.seq_len - T, seq.shape[1]), dtype=np.float32)
         return np.vstack([seq, pad])
 
 
