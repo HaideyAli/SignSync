@@ -3,8 +3,8 @@ import torch.nn as nn
 import math
 
 NUM_CLASSES = 100
-INPUT_DIM   = 258   # landmark values per frame
-SEQ_LEN     = 30    # frames per sequence
+INPUT_DIM   = 516   # 258 landmark positions + 258 frame-to-frame velocity deltas
+SEQ_LEN     = 30
 
 
 class LSTMClassifier(nn.Module):
@@ -21,19 +21,16 @@ class LSTMClassifier(nn.Module):
         )
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, 128),  # *2 for bidirectional
+            nn.Linear(hidden_dim * 2, 128),
             nn.ReLU(),
             nn.Linear(128, num_classes),
         )
 
     def forward(self, x):
-        # x: (batch, 30, 258)
         _, (hidden, _) = self.lstm(x)
-        # hidden: (num_layers*2, batch, hidden_dim) — take last layer, both directions
-        fwd = hidden[-2]   # last forward layer
-        bwd = hidden[-1]   # last backward layer
-        out = torch.cat([fwd, bwd], dim=1)   # (batch, hidden_dim*2)
-        return self.classifier(out)
+        fwd = hidden[-2]
+        bwd = hidden[-1]
+        return self.classifier(torch.cat([fwd, bwd], dim=1))
 
 
 class PositionalEncoding(nn.Module):
@@ -46,7 +43,7 @@ class PositionalEncoding(nn.Module):
         div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(pos * div)
         pe[:, 1::2] = torch.cos(pos * div)
-        self.register_buffer("pe", pe.unsqueeze(0))  # (1, max_len, d_model)
+        self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x):
         return self.dropout(x + self.pe[:, : x.size(1)])
@@ -54,7 +51,7 @@ class PositionalEncoding(nn.Module):
 
 class TransformerClassifier(nn.Module):
     # Projects landmarks into embedding space, adds position info, applies attention, classifies
-    def __init__(self, input_dim=INPUT_DIM, d_model=128, nhead=4,
+    def __init__(self, input_dim=INPUT_DIM, d_model=256, nhead=8,
                  num_layers=2, num_classes=NUM_CLASSES, dropout=0.3):
         super().__init__()
         self.input_proj   = nn.Linear(input_dim, d_model)
@@ -62,7 +59,7 @@ class TransformerClassifier(nn.Module):
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=nhead,
-            dim_feedforward=256, dropout=dropout,
+            dim_feedforward=512, dropout=dropout,
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
@@ -73,14 +70,12 @@ class TransformerClassifier(nn.Module):
         )
 
     def forward(self, x):
-        # x: (batch, 30, 258)
-        x = self.pos_encoding(self.input_proj(x))   # (batch, 30, d_model)
-        x = self.transformer(x)                      # (batch, 30, d_model)
-        x = x.mean(dim=1)                            # mean pool over time → (batch, d_model)
+        x = self.pos_encoding(self.input_proj(x))
+        x = self.transformer(x)
+        x = x.mean(dim=1)
         return self.classifier(x)
 
 
-# Returns the right model given an arch string — used by train.py and evaluate.py
 def build_model(arch: str, num_classes: int = NUM_CLASSES) -> nn.Module:
     if arch == "lstm":
         return LSTMClassifier(num_classes=num_classes)
