@@ -9,14 +9,29 @@ HAND_END = 126
 POSE_END = 258
 
 
-def add_noise(seq: np.ndarray, std: float = 0.005) -> np.ndarray:
-    noise = np.random.normal(0, std, seq.shape).astype(np.float32)
+def add_noise(seq: np.ndarray, rel_std: float = 0.02) -> np.ndarray:
+    """Jitter sized relative to the sequence's own spread, not an absolute
+    constant — landmarks are scale-normalised upstream, so a fixed sigma
+    silently changes strength whenever that normalisation changes."""
+    spread = float(seq[:, :HAND_END].std()) or 1.0
+    noise = np.random.normal(0, rel_std * spread, seq.shape).astype(np.float32)
     vis_indices = np.arange(HAND_END + 3, POSE_END, 4)
     noise[:, vis_indices] = 0.0
     return seq + noise
 
 
-def temporal_shift(seq: np.ndarray, max_shift: int = 2) -> np.ndarray:
+def frame_dropout(seq: np.ndarray, max_frames: int = 3) -> np.ndarray:
+    """Zero the hand landmarks in a few random frames. MediaPipe loses hand
+    detections mid-sign on a live webcam, so train for it — matches the
+    "missing landmarks become zeros" rule the pipeline already follows."""
+    result = seq.copy()
+    n = np.random.randint(1, max_frames + 1)
+    for idx in np.random.choice(len(seq), size=min(n, len(seq)), replace=False):
+        result[idx, :HAND_END] = 0.0
+    return result
+
+
+def temporal_shift(seq: np.ndarray, max_shift: int = 4) -> np.ndarray:
     shift = np.random.randint(-max_shift, max_shift + 1)
     if shift == 0:
         return seq
@@ -28,7 +43,7 @@ def temporal_shift(seq: np.ndarray, max_shift: int = 2) -> np.ndarray:
     return result
 
 
-def speed_jitter(seq: np.ndarray, low: float = 0.8, high: float = 1.2) -> np.ndarray:
+def speed_jitter(seq: np.ndarray, low: float = 0.7, high: float = 1.35) -> np.ndarray:
     """Randomly stretch or compress the sequence in time, then resample back to T frames."""
     T, D = seq.shape
     factor = np.random.uniform(low, high)
@@ -48,7 +63,7 @@ def speed_jitter(seq: np.ndarray, low: float = 0.8, high: float = 1.2) -> np.nda
     return result
 
 
-def hand_scale_jitter(seq: np.ndarray, scale_range: float = 0.1) -> np.ndarray:
+def hand_scale_jitter(seq: np.ndarray, scale_range: float = 0.15) -> np.ndarray:
     """Scale hand landmark distances from the wrist by a random factor per hand."""
     result = seq.copy()
     scale = 1.0 + np.random.uniform(-scale_range, scale_range)
@@ -82,4 +97,6 @@ def augment_sequence(seq: np.ndarray) -> np.ndarray:
         seq = speed_jitter(seq)
     if np.random.random() < 0.5:
         seq = hand_scale_jitter(seq)
+    if np.random.random() < 0.3:
+        seq = frame_dropout(seq)
     return seq
