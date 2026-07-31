@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--batch",   type=int, default=32)
     parser.add_argument("--num_classes", type=int, default=50)
     parser.add_argument("--labels",  default="data/labels_50.json")
+    parser.add_argument("--group_personal", action="store_true",
+                        help="hold out the last personal takes entirely (leakage-reduced split)")
     parser.add_argument("--debug",   action="store_true")
     args = parser.parse_args()
 
@@ -73,7 +75,8 @@ def main():
     ckpt_path = CHECKPOINT_DIR / "best_model.pth"
 
     train_loader, val_loader, label_map = create_dataloaders(
-        labels_path=args.labels, batch_size=args.batch, augment=True
+        labels_path=args.labels, batch_size=args.batch, augment=True,
+        group_personal=args.group_personal
     )
 
     model     = build_model(args.arch, num_classes=args.num_classes).to(DEVICE)

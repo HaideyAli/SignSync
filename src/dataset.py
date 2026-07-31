@@ -5,7 +5,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
-_PERSONAL_RE = re.compile(r"^(.+)_personal_\d+$")
+from splits import random_indices, grouped_indices
+
+_PERSONAL_RE = re.compile(r"^(.+)_personal_(\d+)$")
 
 
 def word_from_stem(stem: str) -> str:
@@ -15,19 +17,27 @@ def word_from_stem(stem: str) -> str:
     m = _PERSONAL_RE.match(stem)
     return m.group(1) if m else "_".join(stem.split("_")[:-1])
 
+
+def personal_take(stem: str) -> int | None:
+    """Take index for a personal recording, or None for a WLASL clip."""
+    m = _PERSONAL_RE.match(stem)
+    return int(m.group(2)) if m else None
+
 SEQ_LEN    = 30
 NUM_VALUES = 258   # raw landmark values per frame
 OUT_VALUES = 516   # after appending velocity (258 positions + 258 deltas)
 
-# Pose landmark indices for left hip (23) and right hip (24) within the pose block
 # Pose block starts at 126; each landmark is 4 values (x,y,z,vis)
-_LEFT_HIP  = 126 + 23 * 4   # 218
-_RIGHT_HIP = 126 + 24 * 4   # 222
+_LEFT_HIP       = 126 + 23 * 4   # 218
+_RIGHT_HIP      = 126 + 24 * 4   # 222
+_LEFT_SHOULDER  = 126 + 11 * 4   # 170
+_RIGHT_SHOULDER = 126 + 12 * 4   # 174
 
 
 def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
-    """Translate every frame so the torso centre (mean of hips) is at origin.
-    Skips frames where both hips are missing (all zeros = undetected)."""
+    """Centre every frame on the torso (mean of hips), then divide by shoulder
+    width so camera distance cancels out — otherwise the same sign looks
+    different near vs far. Undetected hips/shoulders are left alone."""
     left_hip  = seq[:, _LEFT_HIP  : _LEFT_HIP  + 3].copy()   # (T, 3)
     right_hip = seq[:, _RIGHT_HIP : _RIGHT_HIP + 3].copy()
     centre    = (left_hip + right_hip) / 2.0                  # (T, 3)
@@ -36,11 +46,18 @@ def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
     detected = (np.abs(left_hip).sum(axis=1) + np.abs(right_hip).sum(axis=1)) > 1e-6
     centre[~detected] = 0.0   # no-op for those frames
 
+    # Shoulder width per frame; 1.0 where shoulders are missing so the divide is a no-op
+    span  = (seq[:, _LEFT_SHOULDER  : _LEFT_SHOULDER  + 3]
+             - seq[:, _RIGHT_SHOULDER : _RIGHT_SHOULDER + 3])
+    scale = np.linalg.norm(span, axis=1, keepdims=True)       # (T, 1)
+    scale[scale < 1e-6] = 1.0
+
+    # x,y,z only — the pose visibility channel is a probability, leave it be
     result = seq.copy()
     for i in range(0, 126, 3):
-        result[:, i:i+3] -= centre
+        result[:, i:i+3] = (result[:, i:i+3] - centre) / scale
     for i in range(126, 258, 4):
-        result[:, i:i+3] -= centre
+        result[:, i:i+3] = (result[:, i:i+3] - centre) / scale
 
     return result
 
@@ -103,12 +120,16 @@ def create_dataloaders(
     val_split: float = 0.15,
     seed: int = 42,
     augment: bool = False,
+    group_personal: bool = False,
+    holdout_from: int = 8,
 ) -> tuple[DataLoader, DataLoader, dict]:
-    base  = ASLDataset(landmarks_dir, labels_path)
-    n     = len(base)
-    val_n = int(n * val_split)
-    perm  = torch.randperm(n, generator=torch.Generator().manual_seed(seed)).tolist()
-    train_idx, val_idx = perm[val_n:], perm[:val_n]
+    base = ASLDataset(landmarks_dir, labels_path)
+
+    if group_personal:
+        takes = [personal_take(path.stem) for path, _ in base.samples]
+        train_idx, val_idx = grouped_indices(takes, val_split, seed, holdout_from)
+    else:
+        train_idx, val_idx = random_indices(len(base), val_split, seed)
 
     train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment), train_idx)
     val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False),   val_idx)
