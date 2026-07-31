@@ -36,10 +36,10 @@ def main():
     batch_seq, batch_labels = next(iter(train_loader))
     print(f"  Train batches : {len(train_loader)}")
     print(f"  Val batches   : {len(val_loader)}")
-    print(f"  Batch shape   : {tuple(batch_seq.shape)}  (expect [16, 30, 258])")
+    print(f"  Batch shape   : {tuple(batch_seq.shape)}  (expect [16, 30, 516] — 258 raw + 258 velocity)")
     print(f"  Labels shape  : {tuple(batch_labels.shape)}")
 
-    assert batch_seq.shape == (16, 30, 258), "Unexpected batch shape!"
+    assert batch_seq.shape == (16, 30, 516), "Unexpected batch shape!"
     print("\nSanity check PASSED.")
 
 

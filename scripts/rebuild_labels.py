@@ -6,8 +6,12 @@ Usage: python scripts/rebuild_labels.py [--landmarks data/landmarks] [--out data
 """
 import json
 import argparse
+import sys
 from pathlib import Path
 from collections import Counter
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from dataset import word_from_stem
 
 
 def main():
@@ -20,8 +24,7 @@ def main():
     landmarks_dir = Path(args.landmarks)
     counts = Counter()
     for f in landmarks_dir.glob("*.npy"):
-        word = "_".join(f.stem.split("_")[:-1])
-        counts[word] += 1
+        counts[word_from_stem(f.stem)] += 1
 
     if not counts:
         print(f"No .npy files found in {landmarks_dir}")

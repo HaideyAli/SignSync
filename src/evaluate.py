@@ -59,12 +59,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--arch", default="transformer", choices=["lstm", "transformer"])
+    parser.add_argument("--num_classes", type=int, default=50)
+    parser.add_argument("--labels", default="data/labels_50.json")
     args = parser.parse_args()
 
-    _, val_loader, label_map = create_dataloaders()
+    _, val_loader, label_map = create_dataloaders(labels_path=args.labels)
     idx_to_word = {v: k for k, v in label_map.items()}
 
-    model = build_model(args.arch).to(DEVICE)
+    model = build_model(args.arch, num_classes=args.num_classes).to(DEVICE)
     ckpt  = torch.load(args.checkpoint, map_location=DEVICE)
     model.load_state_dict(ckpt["model_state"])
 

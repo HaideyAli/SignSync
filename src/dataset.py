@@ -1,8 +1,19 @@
 import json
+import re
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
+
+_PERSONAL_RE = re.compile(r"^(.+)_personal_\d+$")
+
+
+def word_from_stem(stem: str) -> str:
+    """WLASL files: {word}_{numeric_id} -> word. Personal recordings:
+    {word}_personal_{take} -> word (the trailing numeric-id split alone
+    would otherwise leave "personal" attached to the word)."""
+    m = _PERSONAL_RE.match(stem)
+    return m.group(1) if m else "_".join(stem.split("_")[:-1])
 
 SEQ_LEN    = 30
 NUM_VALUES = 258   # raw landmark values per frame
@@ -58,7 +69,7 @@ class ASLDataset(Dataset):
 
         self.samples: list[tuple[Path, int]] = []
         for npy_file in sorted(self.landmarks_dir.glob("*.npy")):
-            word = "_".join(npy_file.stem.split("_")[:-1])
+            word = word_from_stem(npy_file.stem)
             if word in self.label_map:
                 self.samples.append((npy_file, self.label_map[word]))
 
