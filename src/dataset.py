@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
+from features import SEQ_LEN, normalise_landmarks, resample, compute_velocity
 from splits import random_indices, grouped_indices
 
 _PERSONAL_RE = re.compile(r"^(.+)_personal_(\d+)$")
@@ -22,53 +23,6 @@ def personal_take(stem: str) -> int | None:
     """Take index for a personal recording, or None for a WLASL clip."""
     m = _PERSONAL_RE.match(stem)
     return int(m.group(2)) if m else None
-
-SEQ_LEN    = 30
-NUM_VALUES = 258   # raw landmark values per frame
-OUT_VALUES = 516   # after appending velocity (258 positions + 258 deltas)
-
-# Pose block starts at 126; each landmark is 4 values (x,y,z,vis)
-_LEFT_HIP       = 126 + 23 * 4   # 218
-_RIGHT_HIP      = 126 + 24 * 4   # 222
-_LEFT_SHOULDER  = 126 + 11 * 4   # 170
-_RIGHT_SHOULDER = 126 + 12 * 4   # 174
-
-
-def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
-    """Centre every frame on the torso (mean of hips), then divide by shoulder
-    width so camera distance cancels out — otherwise the same sign looks
-    different near vs far. Undetected hips/shoulders are left alone."""
-    left_hip  = seq[:, _LEFT_HIP  : _LEFT_HIP  + 3].copy()   # (T, 3)
-    right_hip = seq[:, _RIGHT_HIP : _RIGHT_HIP + 3].copy()
-    centre    = (left_hip + right_hip) / 2.0                  # (T, 3)
-
-    # Mask frames where hips were not detected (both near zero)
-    detected = (np.abs(left_hip).sum(axis=1) + np.abs(right_hip).sum(axis=1)) > 1e-6
-    centre[~detected] = 0.0   # no-op for those frames
-
-    # Shoulder width per frame; 1.0 where shoulders are missing so the divide is a no-op
-    span  = (seq[:, _LEFT_SHOULDER  : _LEFT_SHOULDER  + 3]
-             - seq[:, _RIGHT_SHOULDER : _RIGHT_SHOULDER + 3])
-    scale = np.linalg.norm(span, axis=1, keepdims=True)       # (T, 1)
-    scale[scale < 1e-6] = 1.0
-
-    # x,y,z only — the pose visibility channel is a probability, leave it be
-    result = seq.copy()
-    for i in range(0, 126, 3):
-        result[:, i:i+3] = (result[:, i:i+3] - centre) / scale
-    for i in range(126, 258, 4):
-        result[:, i:i+3] = (result[:, i:i+3] - centre) / scale
-
-    return result
-
-
-def compute_velocity(seq: np.ndarray) -> np.ndarray:
-    """Append frame-to-frame deltas. Must be called BEFORE zero-padding
-    so padded frames don't create spurious velocity spikes. Output: (T, 516)."""
-    delta = np.zeros_like(seq)
-    delta[1:] = seq[1:] - seq[:-1]
-    return np.concatenate([seq, delta], axis=1).astype(np.float32)
-
 
 class ASLDataset(Dataset):
     # Scans the landmarks folder and builds the list of (file, label) pairs
@@ -96,20 +50,13 @@ class ASLDataset(Dataset):
     def __getitem__(self, idx: int):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
-        seq = normalise_landmarks(seq)            # centre on torso (before padding)
+        seq = normalise_landmarks(seq)            # centre + scale on torso
         if self.augment:
             from augment import augment_sequence
             seq = augment_sequence(seq)
-        seq = compute_velocity(seq)               # (T, 516) — before padding so no spike at boundary
-        seq = self._pad_or_trim(seq)              # (30, 516)
+        seq = resample(seq, self.seq_len)         # (30, 258) — whole clip, no truncation
+        seq = compute_velocity(seq)               # (30, 516) — deltas on the resampled timebase
         return torch.from_numpy(seq), label
-
-    def _pad_or_trim(self, seq: np.ndarray) -> np.ndarray:
-        T = seq.shape[0]
-        if T >= self.seq_len:
-            return seq[: self.seq_len]
-        pad = np.zeros((self.seq_len - T, seq.shape[1]), dtype=np.float32)
-        return np.vstack([seq, pad])
 
 
 # Splits into train/val, applies weighted sampler to handle class imbalance
