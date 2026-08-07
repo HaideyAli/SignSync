@@ -4,8 +4,7 @@ captioned video feed as a virtual camera Zoom can select.
     python src/gui_app.py --checkpoint checkpoints/best_model_transformer_50_v10.pth
 
 Press Start, then sign along to the countdown; each word joins the sentence.
-See docs/DEMO_SCRIPT.md for Zoom setup and demo sentences.
-"""
+See docs/DEMO_SCRIPT.md for Zoom setup and demo sentences."""
 import argparse
 import sys
 
