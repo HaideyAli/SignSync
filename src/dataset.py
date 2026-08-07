@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
-from features import (SEQ_LEN, is_two_handed, mirror_landmarks,
+from features import (SEQ_LEN, add_presence_flags, drop_legs,
                       normalise_landmarks, resample, compute_velocity)
 from splits import random_indices, grouped_indices
 
@@ -31,13 +31,9 @@ class ASLDataset(Dataset):
                  landmarks_dir: str = "data/landmarks",
                  labels_path: str = "data/labels.json",
                  seq_len: int = SEQ_LEN,
-                 augment: bool = False,
-                 mirror_wlasl: str = "single"):
-        if mirror_wlasl not in ("off", "single", "all"):
-            raise ValueError(f"mirror_wlasl must be off/single/all, got {mirror_wlasl!r}")
+                 augment: bool = False):
         self.seq_len = seq_len
         self.augment = augment
-        self.mirror_wlasl = mirror_wlasl
         self.landmarks_dir = Path(landmarks_dir)
 
         with open(labels_path) as f:
@@ -55,18 +51,15 @@ class ASLDataset(Dataset):
     def __getitem__(self, idx: int):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
-        # WLASL puts the signing hand in the opposite block to webcam recordings;
-        # mirror it so both sources — and live inference — share one convention.
-        # "single" skips two-handed signs, where mirroring swaps hand roles.
-        if self.mirror_wlasl != "off" and personal_take(path.stem) is None:
-            if self.mirror_wlasl == "all" or not is_two_handed(seq):
-                seq = mirror_landmarks(seq)
-        seq = normalise_landmarks(seq)            # centre + scale on torso
+        raw = seq                                 # keep pre-normalisation copy for flags
+        seq = normalise_landmarks(seq)            # centre + scale, missing hands stay zero
         if self.augment:
             from augment import augment_sequence
             seq = augment_sequence(seq)
-        seq = resample(seq, self.seq_len)         # (30, 258) — whole clip, no truncation
-        seq = compute_velocity(seq)               # (30, 516) — deltas on the resampled timebase
+        seq = drop_legs(seq)                      # (T, 226) — legs are never detected
+        seq = add_presence_flags(seq, raw)        # (T, 228)
+        seq = resample(seq, self.seq_len)         # (30, 228) — whole clip, no truncation
+        seq = compute_velocity(seq)               # (30, 456) — deltas on the resampled timebase
         return torch.from_numpy(seq), label
 
 
@@ -80,9 +73,8 @@ def create_dataloaders(
     augment: bool = False,
     group_personal: bool = False,
     holdout_from: int = 8,
-    mirror_wlasl: str = "single",
 ) -> tuple[DataLoader, DataLoader, dict]:
-    base = ASLDataset(landmarks_dir, labels_path, mirror_wlasl=mirror_wlasl)
+    base = ASLDataset(landmarks_dir, labels_path)
 
     if group_personal:
         takes = [personal_take(path.stem) for path, _ in base.samples]
@@ -90,10 +82,8 @@ def create_dataloaders(
     else:
         train_idx, val_idx = random_indices(len(base), val_split, seed)
 
-    train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment,
-                                 mirror_wlasl=mirror_wlasl), train_idx)
-    val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False,
-                                 mirror_wlasl=mirror_wlasl), val_idx)
+    train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment), train_idx)
+    val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False),   val_idx)
 
     # Weighted sampler — rare classes get same expected frequency as common ones
     label_counts: dict[int, int] = {}

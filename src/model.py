@@ -3,7 +3,7 @@ import torch.nn as nn
 import math
 
 NUM_CLASSES = 100
-INPUT_DIM   = 516   # 258 landmark positions + 258 frame-to-frame velocity deltas
+INPUT_DIM   = 456   # 228 values (226 landmarks + 2 hand-presence flags) + velocity
 SEQ_LEN     = 30
 
 

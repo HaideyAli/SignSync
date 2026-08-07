@@ -5,70 +5,27 @@ inference needs exactly this pipeline: the frames coming off the webcam must
 be transformed identically to the training data or the model sees a different
 distribution than it was trained on.
 
-Order matters: normalise -> resample -> compute_velocity.
+Order matters: normalise -> drop_legs -> add_presence_flags -> resample
+-> compute_velocity.
 """
 import numpy as np
 
 SEQ_LEN    = 30
-NUM_VALUES = 258   # raw landmark values per frame
-OUT_VALUES = 516   # after appending velocity (258 positions + 258 deltas)
+NUM_VALUES = 258   # raw landmark values per frame as stored on disk
+
+# Pose landmarks 25-32 are knees/ankles/heels/feet. Measured mean MediaPipe
+# visibility 0.045 — effectively never detected — yet they occupy 32 of the
+# 258 values in every frame. Dropping them removes 12% pure noise.
+_LEG_START = 126 + 25 * 4   # 226
+KEPT_VALUES = 226           # 63 + 63 + 25 pose landmarks * 4
+FLAG_VALUES = KEPT_VALUES + 2          # + left/right hand presence
+OUT_VALUES  = FLAG_VALUES * 2          # 456, after appending velocity
 
 # Pose block starts at 126; each landmark is 4 values (x,y,z,vis)
 _LEFT_HIP       = 126 + 23 * 4   # 218
 _RIGHT_HIP      = 126 + 24 * 4   # 222
 _LEFT_SHOULDER  = 126 + 11 * 4   # 170
 _RIGHT_SHOULDER = 126 + 12 * 4   # 174
-
-
-# MediaPipe pose left/right landmark pairs; 0 (nose) is central and has no partner
-_POSE_MIRROR_PAIRS = [(1, 4), (2, 5), (3, 6), (7, 8), (9, 10), (11, 12), (13, 14),
-                      (15, 16), (17, 18), (19, 20), (21, 22), (23, 24), (25, 26),
-                      (27, 28), (29, 30), (31, 32)]
-
-
-def is_two_handed(seq: np.ndarray, ratio: float = 1.3) -> bool:
-    """True when both hands are present for a comparable number of frames.
-
-    Matters because mirroring a two-handed sign swaps the dominant and
-    non-dominant roles. Many ASL signs are asymmetric — one hand acts, the
-    other is a static base — so that swap produces a different, often invalid
-    sign. One-handed clips have no such constraint: which block the hand lands
-    in is an artefact of camera orientation, so they are free to mirror."""
-    l = int((np.abs(seq[:, 0:63]).sum(1)   > 1e-6).sum())
-    r = int((np.abs(seq[:, 63:126]).sum(1) > 1e-6).sum())
-    return not (l > r * ratio or r > l * ratio)
-
-
-def mirror_landmarks(seq: np.ndarray) -> np.ndarray:
-    """Horizontally mirror a clip: swap hand blocks, swap pose left/right pairs,
-    and flip x. Call on RAW landmarks, before normalisation, while x is still
-    in [0,1] image space.
-
-    Personal webcam takes are ~51% left-hand-dominant while WLASL clips are
-    ~51% right-hand-dominant, so the signing hand sits in opposite blocks and
-    the model would otherwise have to learn every sign twice."""
-    l_missing = np.abs(seq[:, 0:63]).sum(1)    < 1e-6
-    r_missing = np.abs(seq[:, 63:126]).sum(1)  < 1e-6
-    p_missing = np.abs(seq[:, 126:258]).sum(1) < 1e-6
-
-    out = seq.copy()
-    out[:, 0:63]   = seq[:, 63:126]
-    out[:, 63:126] = seq[:, 0:63]
-    for a, b in _POSE_MIRROR_PAIRS:
-        ia, ib = 126 + a * 4, 126 + b * 4
-        out[:, ia:ia + 4] = seq[:, ib:ib + 4]
-        out[:, ib:ib + 4] = seq[:, ia:ia + 4]
-
-    # x only — y is unaffected by a horizontal flip, z is depth, vis is a probability
-    out[:, 0:126:3]   = 1.0 - out[:, 0:126:3]
-    out[:, 126:258:4] = 1.0 - out[:, 126:258:4]
-
-    # Undetected blocks must stay zero; the flip above would have made them 1.0.
-    # Masks swap sides along with the data.
-    out[r_missing, 0:63]    = 0.0
-    out[l_missing, 63:126]  = 0.0
-    out[p_missing, 126:258] = 0.0
-    return out
 
 
 def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
@@ -89,6 +46,13 @@ def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
     scale = np.linalg.norm(span, axis=1, keepdims=True)       # (T, 1)
     scale[scale < 1e-6] = 1.0
 
+    # Undetected blocks must survive as zeros. Centring/scaling an all-zero
+    # hand turns it into -centre/scale (magnitude ~1.9), which reads as "hand
+    # at a definite position" rather than "no hand" — and hands are missing in
+    # 40-80% of frames, so this corrupted most of the data.
+    l_missing = np.abs(seq[:, 0:63]).sum(1)    < 1e-6
+    r_missing = np.abs(seq[:, 63:126]).sum(1)  < 1e-6
+
     # x,y,z only — the pose visibility channel is a probability, leave it be
     result = seq.copy()
     for i in range(0, 126, 3):
@@ -96,7 +60,26 @@ def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
     for i in range(126, 258, 4):
         result[:, i:i+3] = (result[:, i:i+3] - centre) / scale
 
+    result[l_missing, 0:63]   = 0.0
+    result[r_missing, 63:126] = 0.0
     return result
+
+
+def drop_legs(seq: np.ndarray) -> np.ndarray:
+    """Remove pose landmarks 25-32 (legs/feet), which are near-never detected."""
+    return seq[:, :_LEG_START]
+
+
+def add_presence_flags(seq: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Append explicit left/right hand-present channels.
+
+    With zeros preserved the model *could* infer presence from an all-zero
+    block, but saying so directly is cheaper to learn than detecting the
+    absence of signal across 63 dimensions. Flags come from the raw landmarks
+    so normalisation cannot affect them."""
+    left  = (np.abs(raw[:, 0:63]).sum(1)   > 1e-6).astype(np.float32)
+    right = (np.abs(raw[:, 63:126]).sum(1) > 1e-6).astype(np.float32)
+    return np.concatenate([seq, left[:, None], right[:, None]], axis=1)
 
 
 def resample(seq: np.ndarray, seq_len: int = SEQ_LEN) -> np.ndarray:
@@ -118,7 +101,7 @@ def resample(seq: np.ndarray, seq_len: int = SEQ_LEN) -> np.ndarray:
 
 def compute_velocity(seq: np.ndarray) -> np.ndarray:
     """Append frame-to-frame deltas. Call AFTER resampling so the deltas match
-    the resampled timebase. Output: (T, 516)."""
+    the resampled timebase. Output: (T, OUT_VALUES)."""
     delta = np.zeros_like(seq)
     delta[1:] = seq[1:] - seq[:-1]
     return np.concatenate([seq, delta], axis=1).astype(np.float32)
