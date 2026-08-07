@@ -3,7 +3,7 @@ captioned video feed as a virtual camera Zoom can select.
 
     python src/gui_app.py --checkpoint checkpoints/best_model_transformer_50_v10.pth
 
-Press Start, then sign along to the countdown; each word joins the sentence.
+Press Start captioning, then sign freely; recognized words build a sentence.
 See docs/DEMO_SCRIPT.md for Zoom setup and demo sentences."""
 import argparse
 import sys
@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.resize(400, 760)
         self.mode = mode
-        self.cycling = False
+        self.captioning = False
         self._build_ui(mode)
 
         self.worker = InferenceWorker(checkpoint, camera, mode, use_vcam)
@@ -49,7 +49,8 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("starting..."); self.status_label.setObjectName("statusLabel")
 
         # Cycle mode drives the rhythm; manual/motion keep a per-sign button
-        self.capture_btn = QPushButton("Start signing" if mode == "cycle" else "Capture Sign")
+        streams = mode in ("live", "cycle")
+        self.capture_btn = QPushButton("Start captioning" if streams else "Capture Sign")
         self.capture_btn.setObjectName("captureButton")
         self.capture_btn.clicked.connect(self._on_capture)
 
@@ -104,12 +105,13 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"error: {message}")
 
     def _on_capture(self) -> None:
-        """Cycle mode toggles the rhythm; other modes capture one sign."""
-        if self.mode != "cycle":
+        """Live/cycle toggle captioning; manual and motion capture one sign."""
+        if self.mode not in ("live", "cycle"):
             return self.worker.request_capture()
-        self.cycling = not self.cycling
-        self.worker.set_cycling(self.cycling)
-        self.capture_btn.setText("Stop" if self.cycling else "Start signing")
+        self.captioning = not self.captioning
+        self.worker.set_running(self.captioning)
+        self.capture_btn.setText("Stop captioning" if self.captioning
+                                 else "Start captioning")
 
     def _on_clear(self) -> None:
         self.worker.request_clear()
@@ -130,11 +132,9 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", default="checkpoints/best_model_transformer_50_v10.pth")
     p.add_argument("--camera", type=int, default=0)
-    # motion is kept but not recommended: its baseline spans ~6.6s at the real
-    # loop rate, so it climbs while you sign and fires as the sign ends
-    p.add_argument("--mode", default="cycle", choices=["cycle", "manual", "motion"],
-                   help="cycle: sign along to a countdown (default); "
-                        "manual: one sign per button press; motion: auto-trigger")
+    p.add_argument("--mode", default="live", choices=["live", "cycle", "manual"],
+                   help="live: sign freely, words appear (default); cycle: sign "
+                        "to a countdown; manual: one sign per button press")
     p.add_argument("--no-vcam", action="store_true", help="window only, no virtual camera")
     args = p.parse_args()
 

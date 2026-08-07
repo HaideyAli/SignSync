@@ -3,7 +3,7 @@
     python src/inference.py --checkpoint checkpoints/best_model_transformer_50_v10.pth
 
 SPACE captures one 4-second take and predicts, mirroring how record_signs.py
-collected the training data. --auto instead fires on detected hand motion.
+collected the training data.
 """
 import argparse
 import sys
@@ -13,14 +13,12 @@ from pathlib import Path
 
 import cv2
 import mediapipe as mp
-import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
 sys.path.insert(0, str(Path(__file__).parent))
 from extract_landmarks import HOLISTIC_MODEL_URL, ensure_model, landmarks_from_frame
-from predictor import (DEVICE, RECORD_SECS, SIGN_ONSET_FRAC, MotionTrigger,
-                       SignPredictor, hands_visible)
+from predictor import DEVICE, RECORD_SECS, SignPredictor, hands_visible
 
 W, H = 640, 480          # must match extraction so landmark scale is consistent
 CONF_THRESHOLD = 0.80    # per CLAUDE.md
@@ -36,7 +34,6 @@ def txt(img, s, x, y, scale=0.7, color=(255, 255, 255)):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--auto", action="store_true", help="trigger on motion instead of SPACE")
     p.add_argument("--seconds", type=float, default=RECORD_SECS,
                    help="capture length; must match how the data was recorded")
     p.add_argument("--camera", type=int, default=0)
@@ -59,8 +56,6 @@ def main():
         sys.exit("ERROR: cannot open webcam")
 
     ring: deque = deque(maxlen=600)      # generous raw history
-    trigger = MotionTrigger()
-    prev_lm = None
     need, results, last_emit = 0, [], 0.0
     frame_i, fps, t0 = 0, 0.0, time.time()
     window = 0                            # frames per capture, set after warmup
@@ -89,15 +84,6 @@ def main():
                 t0 = time.time()
                 print(f"~{fps:.1f} fps -> capturing {window} frames per {args.seconds}s take")
 
-            fire = False
-            if args.auto and need == 0 and frame_i > WARMUP_FRAMES:
-                fire = trigger.update(prev_lm, lm)
-            prev_lm = lm
-
-            if fire:
-                # Start the window before the sign so it lands ~18% in, as in training
-                need = max(1, window - int(window * SIGN_ONSET_FRAC))
-
             if need > 0:
                 need -= 1
                 if need == 0 and len(ring) >= window:
@@ -120,11 +106,10 @@ def main():
             elif need > 0:
                 txt(canvas, f"RECORDING  {need/max(fps,1):.1f}s", 12, 44, 1.1, (30, 30, 255))
             else:
-                txt(canvas, "SPACE to sign" if not args.auto else "waiting for motion",
-                    12, 44, 0.8, (200, 200, 200))
+                txt(canvas, "SPACE to sign", 12, 44, 0.8, (200, 200, 200))
 
-            txt(canvas, f"{fps:.0f} fps   window {window}f/{args.seconds:.1f}s"
-                        + ("   AUTO" if args.auto else ""), 12, H - 40, 0.5, (150, 150, 150))
+            txt(canvas, f"{fps:.0f} fps   window {window}f/{args.seconds:.1f}s",
+                12, H - 40, 0.5, (150, 150, 150))
             txt(canvas, "SPACE = capture    Q = quit", 12, H - 16, 0.5, (150, 150, 150))
             cv2.imshow("SignBridge — Live", canvas)
 

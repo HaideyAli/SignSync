@@ -48,33 +48,3 @@ def hands_visible(frames, recent: int = 10) -> bool:
     """True if either hand was detected recently — stops the engine predicting
     confidently over an empty frame."""
     return any(np.abs(f[:126]).sum() > 1e-6 for f in frames[-recent:])
-
-
-class MotionTrigger:
-    """Fires on a sustained rise in hand motion, for --auto mode.
-
-    Idle and active frames overlap heavily in absolute motion, so a fixed
-    threshold misfires. This tracks a running baseline and fires only when
-    motion exceeds a multiple of it for several consecutive frames.
-    """
-
-    def __init__(self, factor: float = 3.0, sustain: int = 2, floor: float = 0.3):
-        self.factor, self.sustain, self.floor = factor, sustain, floor
-        self.history: list[float] = []
-        self.run = 0
-
-    def update(self, prev, cur) -> bool:
-        if prev is None or np.abs(cur[:126]).sum() < 1e-6:
-            self.run = 0
-            return False
-        motion = float(np.abs(cur[:126] - prev[:126]).sum())
-        self.history.append(motion)
-        if len(self.history) > 60:
-            self.history.pop(0)
-        baseline = float(np.median(self.history)) if len(self.history) >= 15 else self.floor
-        threshold = max(self.floor, baseline * self.factor)
-        self.run = self.run + 1 if motion > threshold else 0
-        if self.run >= self.sustain:
-            self.run = 0
-            return True
-        return False

@@ -18,7 +18,8 @@ from collections import deque
 
 import numpy as np
 
-from predictor import RECORD_SECS, SIGN_ONSET_FRAC, MotionTrigger
+from predictor import RECORD_SECS, SIGN_ONSET_FRAC
+from segmenter import SignSegmenter, hand_motion, window_for
 
 CONF_THRESHOLD = 0.80    # per CLAUDE.md
 COOLDOWN_S     = 1.5
@@ -29,12 +30,12 @@ READY_GAP_S    = 2.0     # "get ready" pause between captures in cycle mode
 
 
 class CaptureEngine:
-    def __init__(self, seconds: float = RECORD_SECS, auto: bool = False):
+    def __init__(self, seconds: float = RECORD_SECS, live: bool = False):
         self.seconds = seconds
-        self.auto = auto
+        self.live = live
+        self.segmenter = SignSegmenter()
+        self._prev_lm = None
         self.ring: deque = deque(maxlen=600)
-        self.trigger = MotionTrigger() if auto else None
-        self.prev_lm: np.ndarray | None = None
         self.window = 0
         self.need = 0
         self.frame_i = 0
@@ -58,13 +59,20 @@ class CaptureEngine:
     def seconds_remaining(self) -> float:
         return self.need / max(self.fps, 1.0)
 
-    # --- cycle mode -------------------------------------------------------
-    # Motion-onset detection proved unusable here: the running baseline spans
-    # ~6.6s at the real loop rate, so it climbs while you sign and the trigger
-    # fires as the sign *ends*. Signs with little motion (yes ~1.6s, no ~1.5s,
-    # cool ~0.9s) were missed entirely. A fixed rhythm removes the guesswork
-    # and reproduces the recording geometry: capture starts on the cue, and
-    # natural reaction time puts the sign ~18% in, exactly as in training.
+    # --- live mode --------------------------------------------------------
+    # Segment-driven, not free-running: the model has no "not a sign" class, so
+    # scoring a sliding window continuously yields confident nonsense whenever
+    # it straddles two signs (measured 0.965 conf / 0.954 margin, above the
+    # weakest real word). Evaluating once per detected sign avoids that
+    # entirely — see segmenter.py.
+
+    def start_live(self) -> None:
+        self.live = True
+
+    def stop_live(self) -> None:
+        self.live = False
+
+    # --- cycle mode (fallback: prompts you when to sign) -------------------
 
     def start_cycle(self) -> None:
         self.cycling = True
@@ -80,11 +88,9 @@ class CaptureEngine:
         return max(0.0, self._next_capture_at - time.time())
 
     def start_capture(self, pre_roll: bool = False) -> bool:
-        """Begin a capture. Returns False (no-op) if already recording or
-        still warming up. pre_roll=True (auto-trigger) starts the window
-        before the detected motion so the sign lands ~SIGN_ONSET_FRAC into
-        it; pre_roll=False (manual button) starts fresh, matching how
-        record_signs.py collected the training data."""
+        """Begin a capture; False (no-op) if already recording or warming up.
+        pre_roll starts the window early so the sign lands ~SIGN_ONSET_FRAC
+        in; without it the window starts now, as record_signs.py did."""
         if self.is_recording or not self.ready or time.time() < self._refractory_until:
             return False
         self.need = (max(1, self.window - int(self.window * SIGN_ONSET_FRAC))
@@ -98,9 +104,8 @@ class CaptureEngine:
         return result
 
     def push_frame(self, lm: np.ndarray) -> None:
-        """Feed one raw (258,) landmark frame. Updates fps/window sizing
-        during warmup, advances the recording countdown, and auto-fires
-        on sustained motion if self.auto."""
+        """Feed one raw (258,) landmark frame: updates fps/window sizing and
+        advances whichever capture mode is active."""
         self.ring.append(lm)
         self.frame_i += 1
 
@@ -124,10 +129,6 @@ class CaptureEngine:
         if not self.is_recording:
             self.window = max(10, int(round(self.seconds * self.fps)))
 
-        if self.auto and self.trigger.update(self.prev_lm, lm):
-            self.start_capture(pre_roll=True)
-        self.prev_lm = lm
-
         if (self.cycling and not self.is_recording and self.ready
                 and time.time() >= self._next_capture_at):
             self.start_capture(pre_roll=False)
@@ -139,3 +140,10 @@ class CaptureEngine:
                 now = time.time()
                 self._refractory_until = now + REFRACTORY_S
                 self._next_capture_at = now + READY_GAP_S
+        elif self.live and self.ready:
+            span = self.segmenter.update(hand_motion(self._prev_lm, lm), self.frame_i)
+            if span is not None:
+                frames = list(self.ring)
+                base = self.frame_i - len(frames)          # ring index -> frame number
+                self._result = list(window_for(frames, span[0] - base, span[1] - base))
+        self._prev_lm = lm

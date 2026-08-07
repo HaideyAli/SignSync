@@ -2,9 +2,8 @@
 
 Emits the *captioned* frame — the same pixels sent to the virtual camera — so
 the preview shows what Zoom participants see. Preview emission is throttled:
-a full frame per signal at camera rate outruns the UI thread and Qt's queued
-connections grow unbounded. The virtual camera still gets every frame.
-"""
+a frame per signal at camera rate outruns the UI thread and Qt's queued
+connections grow unbounded. The virtual camera still gets every frame."""
 import time
 
 import cv2
@@ -35,11 +34,11 @@ class InferenceWorker(QThread):
     error            = Signal(str)
 
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
-                 mode: str = "cycle", use_vcam: bool = True):
+                 mode: str = "live", use_vcam: bool = True):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index
-        self.mode = mode                 # "cycle" | "manual" | "motion"
+        self.mode = mode                 # "live" | "cycle" | "manual"
         self.use_vcam = use_vcam
         self.session = SignSession()
         self._running = False
@@ -54,7 +53,8 @@ class InferenceWorker(QThread):
     def request_clear(self) -> None:
         self._clear_requested = True
 
-    def set_cycling(self, on: bool) -> None:
+    def set_running(self, on: bool) -> None:
+        """Start/stop captioning — live mode streams, cycle mode prompts."""
         self._cycle_request = on
 
     def stop(self) -> None:
@@ -68,7 +68,9 @@ class InferenceWorker(QThread):
 
     def _run(self) -> None:
         predictor = SignPredictor(self.checkpoint_path)
-        engine = CaptureEngine(auto=(self.mode == "motion"))
+        engine = CaptureEngine()
+        start, stop = ((engine.start_live, engine.stop_live) if self.mode == "live"
+                       else (engine.start_cycle, engine.stop_cycle))
 
         opts = holistic_options()
         self.status_changed.emit("opening camera...")
@@ -97,7 +99,7 @@ class InferenceWorker(QThread):
                     engine.push_frame(lm)
 
                     if self._cycle_request is not None:
-                        engine.start_cycle() if self._cycle_request else engine.stop_cycle()
+                        start() if self._cycle_request else stop()
                         self._cycle_request = None
                     if self._clear_requested:
                         self._clear_requested = False
@@ -127,16 +129,15 @@ class InferenceWorker(QThread):
                 vcam.close()
 
     def _subtitle(self, engine: CaptureEngine) -> str:
-        """Drives the on-screen cue — the signer needs to know *when* to start,
-        which is the whole point of cycle mode."""
+        """Live mode shows only the signed words — the video feed is what the
+        meeting sees, so no cues or countdowns go on it."""
+        if self.mode == "live":
+            return self.session.subtitle
         if engine.is_recording:
             return f"● SIGN NOW   {engine.seconds_remaining:.1f}s"
         if engine.cycling:
             return f"get ready...  {engine.seconds_until_capture:.1f}s"
-        if self.session.is_building:
-            return self.session.subtitle
-        return self.session.rejected or ("press Start" if self.mode == "cycle"
-                                         else "press Capture Sign")
+        return self.session.subtitle or self.session.rejected
 
     def _handle_capture(self, predictor: SignPredictor, frames) -> None:
         if not hands_visible(frames):
