@@ -47,7 +47,6 @@ class MainWindow(QMainWindow):
 
         self.preview = QLabel(); self.preview.setFixedHeight(300)
         self.preview.setAlignment(Qt.AlignCenter); self.preview.setObjectName("previewLabel")
-
         self.status_label = QLabel("starting..."); self.status_label.setObjectName("statusLabel")
 
         # Cycle mode drives the rhythm; manual/motion keep a per-sign button
