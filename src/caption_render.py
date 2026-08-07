@@ -1,9 +1,15 @@
 """Draws the caption bar onto a webcam frame.
 
 Uses Pillow with a real TrueType face rather than cv2.putText's Hershey
-fonts, which look blocky on a video call. All BGR<->RGB conversion is
-confined to this module so there is one place for the channel order to be
-wrong, not several.
+fonts, which look blocky on a video call.
+
+Text is rasterised to a transparent overlay and cached, because a full
+numpy->PIL->numpy round-trip per frame at 30fps saturates the capture
+thread. Only a caption *change* costs a re-render; steady-state frames pay
+one darken plus one alpha composite over the bar region.
+
+All BGR<->RGB conversion is confined to this module so there is one place
+for the channel order to be wrong, not several.
 """
 from pathlib import Path
 
@@ -20,6 +26,7 @@ _FONT_CANDIDATES = [
 BAR_HEIGHT_FRAC = 0.26     # bottom slice of the frame the caption bar occupies
 BAR_ALPHA       = 0.62
 _font_cache: dict[int, ImageFont.FreeTypeFont] = {}
+_overlay_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
@@ -47,27 +54,11 @@ def _wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int, draw: ImageDraw.I
     return lines
 
 
-def draw_caption(frame_bgr: np.ndarray, text: str, subtitle: str = "") -> np.ndarray:
-    """Return a copy of the frame with a translucent caption bar at the bottom.
-
-    Shrinks the font and wraps until the text fits the bar, so a long
-    sentence degrades gracefully instead of overflowing off-frame."""
-    if not text and not subtitle:
-        return frame_bgr
-
-    h, w = frame_bgr.shape[:2]
-    bar_h = int(h * BAR_HEIGHT_FRAC)
-    out = frame_bgr.copy()
-
-    # Translucent bar via real alpha blending over the existing pixels
-    overlay = out.copy()
-    cv2.rectangle(overlay, (0, h - bar_h), (w, h), (12, 14, 18), thickness=-1)
-    cv2.addWeighted(overlay, BAR_ALPHA, out, 1 - BAR_ALPHA, 0, dst=out)
-
-    pil = Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil)
-    margin = int(w * 0.05)
-    max_w = w - 2 * margin
+def _build_overlay(w: int, bar_h: int, text: str, subtitle: str):
+    """Rasterise the caption text once into (bgr, alpha) strips of the bar."""
+    img = Image.new("RGBA", (w, bar_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    margin, max_w = int(w * 0.05), w - 2 * int(w * 0.05)
 
     lines, font = [], _font(30)
     if text:
@@ -80,17 +71,47 @@ def draw_caption(frame_bgr: np.ndarray, text: str, subtitle: str = "") -> np.nda
 
     sub_font = _font(15)
     line_h = (font.size + 8) if lines else 0
-    sub_h = (sub_font.size + 6) if subtitle else 0
-    block_h = len(lines) * line_h + sub_h
-    y = h - bar_h + max(6, (bar_h - block_h) // 2)
+    sub_h  = (sub_font.size + 6) if subtitle else 0
+    y = max(6, (bar_h - (len(lines) * line_h + sub_h)) // 2)
 
     for line in lines:
-        x = (w - draw.textlength(line, font=font)) / 2
-        draw.text((x, y), line, font=font, fill=(255, 255, 255))
+        draw.text(((w - draw.textlength(line, font=font)) / 2, y), line,
+                  font=font, fill=(255, 255, 255, 255))
         y += line_h
-
     if subtitle:
-        x = (w - draw.textlength(subtitle, font=sub_font)) / 2
-        draw.text((x, y), subtitle, font=sub_font, fill=(150, 158, 170))
+        draw.text(((w - draw.textlength(subtitle, font=sub_font)) / 2, y), subtitle,
+                  font=sub_font, fill=(150, 158, 170, 255))
 
-    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    rgba = np.array(img)
+    bgr = cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2BGR)
+    alpha = (rgba[:, :, 3:4].astype(np.float32) / 255.0)
+    return bgr, alpha
+
+
+def _overlay(w: int, bar_h: int, text: str, subtitle: str):
+    key = (w, bar_h, text, subtitle)
+    if key not in _overlay_cache:
+        if len(_overlay_cache) > 32:          # bounded: captions change constantly
+            _overlay_cache.clear()
+        _overlay_cache[key] = _build_overlay(w, bar_h, text, subtitle)
+    return _overlay_cache[key]
+
+
+def draw_caption(frame_bgr: np.ndarray, text: str, subtitle: str = "") -> np.ndarray:
+    """Return a copy of the frame with a translucent caption bar at the bottom."""
+    if not text and not subtitle:
+        return frame_bgr
+
+    h, w = frame_bgr.shape[:2]
+    bar_h = int(h * BAR_HEIGHT_FRAC)
+    out = frame_bgr.copy()
+    roi = out[h - bar_h:h]
+
+    # Darken the bar region (cheap, in-place)
+    dark = np.full_like(roi, (12, 14, 18))
+    cv2.addWeighted(dark, BAR_ALPHA, roi, 1 - BAR_ALPHA, 0, dst=roi)
+
+    # Composite the cached text raster over it
+    text_bgr, alpha = _overlay(w, bar_h, text, subtitle)
+    roi[:] = (roi * (1 - alpha) + text_bgr * alpha).astype(np.uint8)
+    return out

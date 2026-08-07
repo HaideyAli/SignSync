@@ -46,6 +46,15 @@ class SignSession:
         self.rejected = ""
         return True
 
+    def offer(self, results: list[tuple[str, float]]) -> tuple[bool, str]:
+        """Offer SignPredictor's ranked output. Returns (accepted, message).
+        Keeps the top-1/top-2 unpacking next to the gates that use it."""
+        word, conf = results[0]
+        runner_up = results[1][1] if len(results) > 1 else 0.0
+        if self.add_word(word, conf, runner_up):
+            return True, f"recognized: {word}"
+        return False, self.rejected
+
     def tick(self) -> str | None:
         """Call periodically. Returns the sentence exactly once, at the moment
         a pause marks it complete."""
