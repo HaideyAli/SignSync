@@ -5,8 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
-from features import (SEQ_LEN, add_presence_flags, drop_legs,
-                      normalise_landmarks, resample, compute_velocity)
+from features import SEQ_LEN, preprocess
 from splits import random_indices, grouped_indices, signer_folds, signer_fold_indices
 
 SIGNERS_PATH = "data/signers.json"
@@ -68,17 +67,13 @@ class ASLDataset(Dataset):
 
     def __getitem__(self, idx: int):
         path, label = self.samples[idx]
-        seq = np.load(path).astype(np.float32)   # (T, 258)
-        raw = seq                                 # keep pre-normalisation copy for flags
-        seq = normalise_landmarks(seq)            # centre + scale, missing hands stay zero
+        raw = np.load(path).astype(np.float32)   # (T, 258)
+        augment_fn = None
         if self.augment:
             from augment import augment_sequence
-            seq = augment_sequence(seq)
-        seq = drop_legs(seq)                      # (T, 226) — legs are never detected
-        seq = add_presence_flags(seq, raw)        # (T, 228)
-        seq = resample(seq, self.seq_len)         # (30, 228) — whole clip, no truncation
-        seq = compute_velocity(seq)               # (30, 456) — deltas on the resampled timebase
-        return torch.from_numpy(seq), label
+            augment_fn = augment_sequence
+        # Same call inference.py makes — see features.preprocess
+        return torch.from_numpy(preprocess(raw, self.seq_len, augment_fn)), label
 
 
 # Splits into train/val, applies weighted sampler to handle class imbalance

@@ -105,3 +105,19 @@ def compute_velocity(seq: np.ndarray) -> np.ndarray:
     delta = np.zeros_like(seq)
     delta[1:] = seq[1:] - seq[:-1]
     return np.concatenate([seq, delta], axis=1).astype(np.float32)
+
+
+def preprocess(raw: np.ndarray, seq_len: int = SEQ_LEN, augment_fn=None) -> np.ndarray:
+    """Raw (T, 258) landmarks -> (seq_len, OUT_VALUES) model input.
+
+    The single definition of the pipeline. Training and live inference both
+    call this, so the webcam cannot end up seeing a different transform than
+    the model was fitted on — the failure mode that silently destroys accuracy
+    at deployment."""
+    seq = normalise_landmarks(raw)
+    if augment_fn is not None:
+        seq = augment_fn(seq)                 # train only; flags come from raw
+    seq = drop_legs(seq)
+    seq = add_presence_flags(seq, raw)
+    seq = resample(seq, seq_len)
+    return compute_velocity(seq)
