@@ -51,18 +51,21 @@ Every word below scores **100% top-1 accuracy** on your own recordings
 
 | Sign in order | Caption produced |
 |---|---|
-| yes → play → basketball | Yes, I want to play basketball. |
-| go → bowling → thursday | I want to go bowling on Thursday. |
-| help → mother → thursday | I want to help mother on Thursday. |
-| give → letter → later | I want to give letter later. |
+| yes → play → basketball | Yes, I play basketball. |
+| go → bowling → thursday | I go bowling on Thursday. |
+| help → mother → thursday | I help mother on Thursday. |
+| give → letter → later | I give letter later. |
 | who → doctor | Who is the doctor? |
+| black → shirt | Black shirt. |
+
+The engine renders **only what you signed**. First person is implied for
+verbs (standard when glossing ASL), and articles are left out because ASL
+does not mark them — "I give letter", not an invented "a letter".
 
 ### Avoid on camera
 
 - **`no`, `pizza`, `bird`, `apple`** — the only four words below 100% (90% each).
   `yes` is safe at 100%; `no` is the weaker half of the pair.
-- **Adjective with no noun** — e.g. `hot → drink` renders as "I want to drink
-  hot." The sentence engine is a template system, not a grammar engine.
 
 ## If a word is misread
 
