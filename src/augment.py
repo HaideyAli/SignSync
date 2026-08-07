@@ -76,16 +76,8 @@ def hand_scale_jitter(seq: np.ndarray, scale_range: float = 0.15) -> np.ndarray:
     return result
 
 
-# mirror_hands is defined but not used — swaps hands, creates invalid ASL signs
-def mirror_hands(seq: np.ndarray) -> np.ndarray:
-    result = seq.copy()
-    left, right = seq[:, :63].copy(), seq[:, 63:126].copy()
-    left_x, right_x = left[:, 0::3].copy(), right[:, 0::3].copy()
-    left[:, 0::3] = 1.0 - right_x
-    right[:, 0::3] = 1.0 - left_x
-    result[:, :63] = left
-    result[:, 63:126] = right
-    return result
+# Superseded by features.mirror_landmarks, which also swaps the pose left/right
+# pairs and preserves undetected-landmark zeros. This version did neither.
 
 
 def augment_sequence(seq: np.ndarray) -> np.ndarray:

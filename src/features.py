@@ -20,6 +20,44 @@ _LEFT_SHOULDER  = 126 + 11 * 4   # 170
 _RIGHT_SHOULDER = 126 + 12 * 4   # 174
 
 
+# MediaPipe pose left/right landmark pairs; 0 (nose) is central and has no partner
+_POSE_MIRROR_PAIRS = [(1, 4), (2, 5), (3, 6), (7, 8), (9, 10), (11, 12), (13, 14),
+                      (15, 16), (17, 18), (19, 20), (21, 22), (23, 24), (25, 26),
+                      (27, 28), (29, 30), (31, 32)]
+
+
+def mirror_landmarks(seq: np.ndarray) -> np.ndarray:
+    """Horizontally mirror a clip: swap hand blocks, swap pose left/right pairs,
+    and flip x. Call on RAW landmarks, before normalisation, while x is still
+    in [0,1] image space.
+
+    Personal webcam takes are ~51% left-hand-dominant while WLASL clips are
+    ~51% right-hand-dominant, so the signing hand sits in opposite blocks and
+    the model would otherwise have to learn every sign twice."""
+    l_missing = np.abs(seq[:, 0:63]).sum(1)    < 1e-6
+    r_missing = np.abs(seq[:, 63:126]).sum(1)  < 1e-6
+    p_missing = np.abs(seq[:, 126:258]).sum(1) < 1e-6
+
+    out = seq.copy()
+    out[:, 0:63]   = seq[:, 63:126]
+    out[:, 63:126] = seq[:, 0:63]
+    for a, b in _POSE_MIRROR_PAIRS:
+        ia, ib = 126 + a * 4, 126 + b * 4
+        out[:, ia:ia + 4] = seq[:, ib:ib + 4]
+        out[:, ib:ib + 4] = seq[:, ia:ia + 4]
+
+    # x only — y is unaffected by a horizontal flip, z is depth, vis is a probability
+    out[:, 0:126:3]   = 1.0 - out[:, 0:126:3]
+    out[:, 126:258:4] = 1.0 - out[:, 126:258:4]
+
+    # Undetected blocks must stay zero; the flip above would have made them 1.0.
+    # Masks swap sides along with the data.
+    out[r_missing, 0:63]    = 0.0
+    out[l_missing, 63:126]  = 0.0
+    out[p_missing, 126:258] = 0.0
+    return out
+
+
 def normalise_landmarks(seq: np.ndarray) -> np.ndarray:
     """Centre every frame on the torso (mean of hips), then divide by shoulder
     width so camera distance cancels out — otherwise the same sign looks

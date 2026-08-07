@@ -5,7 +5,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
-from features import SEQ_LEN, normalise_landmarks, resample, compute_velocity
+from features import (SEQ_LEN, mirror_landmarks, normalise_landmarks,
+                      resample, compute_velocity)
 from splits import random_indices, grouped_indices
 
 _PERSONAL_RE = re.compile(r"^(.+)_personal_(\d+)$")
@@ -30,9 +31,11 @@ class ASLDataset(Dataset):
                  landmarks_dir: str = "data/landmarks",
                  labels_path: str = "data/labels.json",
                  seq_len: int = SEQ_LEN,
-                 augment: bool = False):
+                 augment: bool = False,
+                 mirror_wlasl: bool = True):
         self.seq_len = seq_len
         self.augment = augment
+        self.mirror_wlasl = mirror_wlasl
         self.landmarks_dir = Path(landmarks_dir)
 
         with open(labels_path) as f:
@@ -50,6 +53,10 @@ class ASLDataset(Dataset):
     def __getitem__(self, idx: int):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
+        # WLASL puts the signing hand in the opposite block to webcam recordings;
+        # mirror it so both sources — and live inference — share one convention
+        if self.mirror_wlasl and personal_take(path.stem) is None:
+            seq = mirror_landmarks(seq)
         seq = normalise_landmarks(seq)            # centre + scale on torso
         if self.augment:
             from augment import augment_sequence
@@ -69,8 +76,9 @@ def create_dataloaders(
     augment: bool = False,
     group_personal: bool = False,
     holdout_from: int = 8,
+    mirror_wlasl: bool = True,
 ) -> tuple[DataLoader, DataLoader, dict]:
-    base = ASLDataset(landmarks_dir, labels_path)
+    base = ASLDataset(landmarks_dir, labels_path, mirror_wlasl=mirror_wlasl)
 
     if group_personal:
         takes = [personal_take(path.stem) for path, _ in base.samples]
@@ -78,8 +86,10 @@ def create_dataloaders(
     else:
         train_idx, val_idx = random_indices(len(base), val_split, seed)
 
-    train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment), train_idx)
-    val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False),   val_idx)
+    train_ds = Subset(ASLDataset(landmarks_dir, labels_path, augment=augment,
+                                 mirror_wlasl=mirror_wlasl), train_idx)
+    val_ds   = Subset(ASLDataset(landmarks_dir, labels_path, augment=False,
+                                 mirror_wlasl=mirror_wlasl), val_idx)
 
     # Weighted sampler — rare classes get same expected frequency as common ones
     label_counts: dict[int, int] = {}
