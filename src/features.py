@@ -26,6 +26,19 @@ _POSE_MIRROR_PAIRS = [(1, 4), (2, 5), (3, 6), (7, 8), (9, 10), (11, 12), (13, 14
                       (27, 28), (29, 30), (31, 32)]
 
 
+def is_two_handed(seq: np.ndarray, ratio: float = 1.3) -> bool:
+    """True when both hands are present for a comparable number of frames.
+
+    Matters because mirroring a two-handed sign swaps the dominant and
+    non-dominant roles. Many ASL signs are asymmetric — one hand acts, the
+    other is a static base — so that swap produces a different, often invalid
+    sign. One-handed clips have no such constraint: which block the hand lands
+    in is an artefact of camera orientation, so they are free to mirror."""
+    l = int((np.abs(seq[:, 0:63]).sum(1)   > 1e-6).sum())
+    r = int((np.abs(seq[:, 63:126]).sum(1) > 1e-6).sum())
+    return not (l > r * ratio or r > l * ratio)
+
+
 def mirror_landmarks(seq: np.ndarray) -> np.ndarray:
     """Horizontally mirror a clip: swap hand blocks, swap pose left/right pairs,
     and flip x. Call on RAW landmarks, before normalisation, while x is still

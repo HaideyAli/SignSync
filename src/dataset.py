@@ -5,8 +5,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 
-from features import (SEQ_LEN, mirror_landmarks, normalise_landmarks,
-                      resample, compute_velocity)
+from features import (SEQ_LEN, is_two_handed, mirror_landmarks,
+                      normalise_landmarks, resample, compute_velocity)
 from splits import random_indices, grouped_indices
 
 _PERSONAL_RE = re.compile(r"^(.+)_personal_(\d+)$")
@@ -32,7 +32,9 @@ class ASLDataset(Dataset):
                  labels_path: str = "data/labels.json",
                  seq_len: int = SEQ_LEN,
                  augment: bool = False,
-                 mirror_wlasl: bool = True):
+                 mirror_wlasl: str = "single"):
+        if mirror_wlasl not in ("off", "single", "all"):
+            raise ValueError(f"mirror_wlasl must be off/single/all, got {mirror_wlasl!r}")
         self.seq_len = seq_len
         self.augment = augment
         self.mirror_wlasl = mirror_wlasl
@@ -54,9 +56,11 @@ class ASLDataset(Dataset):
         path, label = self.samples[idx]
         seq = np.load(path).astype(np.float32)   # (T, 258)
         # WLASL puts the signing hand in the opposite block to webcam recordings;
-        # mirror it so both sources — and live inference — share one convention
-        if self.mirror_wlasl and personal_take(path.stem) is None:
-            seq = mirror_landmarks(seq)
+        # mirror it so both sources — and live inference — share one convention.
+        # "single" skips two-handed signs, where mirroring swaps hand roles.
+        if self.mirror_wlasl != "off" and personal_take(path.stem) is None:
+            if self.mirror_wlasl == "all" or not is_two_handed(seq):
+                seq = mirror_landmarks(seq)
         seq = normalise_landmarks(seq)            # centre + scale on torso
         if self.augment:
             from augment import augment_sequence
@@ -76,7 +80,7 @@ def create_dataloaders(
     augment: bool = False,
     group_personal: bool = False,
     holdout_from: int = 8,
-    mirror_wlasl: bool = True,
+    mirror_wlasl: str = "single",
 ) -> tuple[DataLoader, DataLoader, dict]:
     base = ASLDataset(landmarks_dir, labels_path, mirror_wlasl=mirror_wlasl)
 
