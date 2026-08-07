@@ -32,11 +32,12 @@ CONFIGS: dict[str, dict] = {
 
 
 def run_one(cfg: dict, fold: int, n_folds: int, epochs: int, labels: str,
-            num_classes: int, lr: float, batch: int) -> tuple[float, float]:
+            num_classes: int, lr: float, batch: int,
+            landmarks: str, signers: str) -> tuple[float, float]:
     """Train one configuration on one fold. Returns (best_val, train_at_best)."""
     train_loader, val_loader, _ = create_dataloaders(
-        labels_path=labels, batch_size=batch, augment=True,
-        n_folds=n_folds, fold=fold)
+        landmarks_dir=landmarks, labels_path=labels, batch_size=batch,
+        augment=True, n_folds=n_folds, fold=fold, signers_path=signers)
 
     model = build_model("transformer", num_classes=num_classes,
                         d_model=cfg["d_model"], num_layers=cfg["layers"],
@@ -70,7 +71,18 @@ def main():
     p.add_argument("--lr",     type=float, default=1e-3)
     p.add_argument("--batch",  type=int, default=32)
     p.add_argument("--only",   default="", help="comma-separated subset of config names")
+    p.add_argument("--landmarks", default="data/landmarks")
+    p.add_argument("--signers",   default="data/signers.json")
     args = p.parse_args()
+
+    # Fail loudly here rather than three frames deep in the sampler
+    n_npy = len(list(Path(args.landmarks).glob("*.npy")))
+    if n_npy == 0:
+        sys.exit(f"No .npy files in {args.landmarks!r} — on Colab, re-run the "
+                 f"unzip cell after any cell that wipes /content/SignSync.")
+    if not Path(args.signers).exists():
+        print(f"warning: {args.signers} missing — WLASL clips will all fall into "
+              f"train and folds will not be signer-disjoint")
 
     names = [n.strip() for n in args.only.split(",") if n.strip()] or list(CONFIGS)
     results: dict[str, list[tuple[float, float]]] = {}
@@ -80,7 +92,8 @@ def main():
         per_fold = []
         for fold in range(args.folds):
             val, tr = run_one(cfg, fold, args.folds, args.epochs, args.labels,
-                              args.num_classes, args.lr, args.batch)
+                              args.num_classes, args.lr, args.batch,
+                              args.landmarks, args.signers)
             per_fold.append((val, tr))
             print(f"  {name:20s} fold {fold}: val {val:.3f}  train {tr:.3f}  gap {tr-val:+.3f}")
         results[name] = per_fold
