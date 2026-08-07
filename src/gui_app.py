@@ -108,16 +108,14 @@ class MainWindow(QMainWindow):
     def _on_capture(self) -> None:
         """Cycle mode toggles the rhythm; other modes capture one sign."""
         if self.mode != "cycle":
-            self.worker.request_capture()
-            return
+            return self.worker.request_capture()
         self.cycling = not self.cycling
         self.worker.set_cycling(self.cycling)
         self.capture_btn.setText("Stop" if self.cycling else "Start signing")
 
     def _on_clear(self) -> None:
         self.worker.request_clear()
-        self.word_list.clear()
-        self.sentence_box.clear()
+        self.word_list.clear(); self.sentence_box.clear()
 
     def closeEvent(self, event) -> None:
         # Bounded wait: the worker can be inside a blocking camera call when
