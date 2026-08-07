@@ -7,7 +7,25 @@ from pathlib import Path
 
 from features import (SEQ_LEN, add_presence_flags, drop_legs,
                       normalise_landmarks, resample, compute_velocity)
-from splits import random_indices, grouped_indices
+from splits import random_indices, grouped_indices, signer_folds, signer_fold_indices
+
+SIGNERS_PATH = "data/signers.json"
+
+
+def load_signers(path: str = SIGNERS_PATH) -> dict[str, int]:
+    """{video_id: signer_id} for WLASL clips; empty if the map is unavailable."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def signer_of(stem: str, signer_map: dict[str, int]) -> int | None:
+    """Signer id for a WLASL clip; None for personal recordings."""
+    if personal_take(stem) is not None:
+        return None
+    return signer_map.get(stem.rsplit("_", 1)[-1])
 
 _PERSONAL_RE = re.compile(r"^(.+)_personal_(\d+)$")
 
@@ -73,11 +91,20 @@ def create_dataloaders(
     augment: bool = False,
     group_personal: bool = False,
     holdout_from: int = 8,
+    n_folds: int = 0,
+    fold: int = 0,
+    signers_path: str = SIGNERS_PATH,
 ) -> tuple[DataLoader, DataLoader, dict]:
     base = ASLDataset(landmarks_dir, labels_path)
+    takes = [personal_take(path.stem) for path, _ in base.samples]
 
-    if group_personal:
-        takes = [personal_take(path.stem) for path, _ in base.samples]
+    if n_folds > 0:
+        # Signer-disjoint CV: no WLASL signer appears in both train and val
+        smap    = load_signers(signers_path)
+        signers = [signer_of(path.stem, smap) for path, _ in base.samples]
+        held    = signer_folds(signers, n_folds, seed)[fold]
+        train_idx, val_idx = signer_fold_indices(takes, signers, held, holdout_from)
+    elif group_personal:
         train_idx, val_idx = grouped_indices(takes, val_split, seed, holdout_from)
     else:
         train_idx, val_idx = random_indices(len(base), val_split, seed)

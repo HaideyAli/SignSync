@@ -76,9 +76,17 @@ class TransformerClassifier(nn.Module):
         return self.classifier(x)
 
 
-def build_model(arch: str, num_classes: int = NUM_CLASSES) -> nn.Module:
+def build_model(arch: str, num_classes: int = NUM_CLASSES,
+                d_model: int = 128, num_layers: int = 2, nhead: int = 4,
+                dropout: float = 0.4) -> nn.Module:
+    """Capacity is parameterised so it can be swept: at 909 training samples
+    the default 338K-param Transformer still reaches 95% train accuracy, so
+    smaller configurations are worth testing against the overfitting gap."""
     if arch == "lstm":
-        return LSTMClassifier(num_classes=num_classes)
+        return LSTMClassifier(num_classes=num_classes, hidden_dim=d_model,
+                              num_layers=num_layers, dropout=dropout)
     if arch == "transformer":
-        return TransformerClassifier(num_classes=num_classes)
+        return TransformerClassifier(num_classes=num_classes, d_model=d_model,
+                                     nhead=nhead, num_layers=num_layers,
+                                     dropout=dropout)
     raise ValueError(f"Unknown arch '{arch}'. Choose 'lstm' or 'transformer'.")

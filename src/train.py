@@ -1,42 +1,32 @@
 import argparse
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import wandb
 from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from dataset import create_dataloaders
+from losses import FocalLoss, mixup
 from model import build_model
 
 CHECKPOINT_DIR = Path("checkpoints")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class FocalLoss(nn.Module):
-    # Down-weights easy examples so training focuses on hard/rare ones
-    def __init__(self, gamma: float = 2.0, label_smoothing: float = 0.1):
-        super().__init__()
-        self.gamma = gamma
-        self.label_smoothing = label_smoothing
-
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = F.cross_entropy(logits, targets, reduction="none",
-                             label_smoothing=self.label_smoothing)
-        pt = torch.exp(-ce)
-        return ((1 - pt) ** self.gamma * ce).mean()
-
-
-def run_epoch(model, loader, criterion, optimizer=None):
+def run_epoch(model, loader, criterion, optimizer=None, mixup_alpha: float = 0.0):
     training = optimizer is not None
     model.train() if training else model.eval()
     total_loss, correct, total = 0.0, 0, 0
     with torch.set_grad_enabled(training):
         for seqs, labels in loader:
             seqs, labels = seqs.to(DEVICE), labels.to(DEVICE)
-            logits = model(seqs)
-            loss   = criterion(logits, labels)
+            if training and mixup_alpha > 0:
+                seqs, labels_b, lam = mixup(seqs, labels, mixup_alpha)
+                logits = model(seqs)
+                loss   = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels_b)
+            else:
+                logits = model(seqs)
+                loss   = criterion(logits, labels)
             if training:
                 optimizer.zero_grad()
                 loss.backward()
@@ -65,6 +55,17 @@ def main():
     parser.add_argument("--labels",  default="data/labels_50.json")
     parser.add_argument("--group_personal", action="store_true",
                         help="hold out the last personal takes entirely (leakage-reduced split)")
+    parser.add_argument("--n_folds", type=int, default=0,
+                        help="signer-disjoint CV folds; 0 disables (use --group_personal instead)")
+    parser.add_argument("--fold",    type=int, default=0)
+    # Capacity / regularisation knobs for overfitting ablations
+    parser.add_argument("--d_model",  type=int,   default=128)
+    parser.add_argument("--layers",   type=int,   default=2)
+    parser.add_argument("--nhead",    type=int,   default=4)
+    parser.add_argument("--dropout",  type=float, default=0.4)
+    parser.add_argument("--wd",       type=float, default=1e-2)
+    parser.add_argument("--mixup",    type=float, default=0.0,
+                        help="mixup alpha; 0 disables")
     parser.add_argument("--debug",   action="store_true")
     args = parser.parse_args()
 
@@ -76,12 +77,14 @@ def main():
 
     train_loader, val_loader, label_map = create_dataloaders(
         labels_path=args.labels, batch_size=args.batch, augment=True,
-        group_personal=args.group_personal
+        group_personal=args.group_personal, n_folds=args.n_folds, fold=args.fold
     )
 
-    model     = build_model(args.arch, num_classes=args.num_classes).to(DEVICE)
+    model     = build_model(args.arch, num_classes=args.num_classes,
+                            d_model=args.d_model, num_layers=args.layers,
+                            nhead=args.nhead, dropout=args.dropout).to(DEVICE)
     criterion = FocalLoss(gamma=1.0, label_smoothing=0.1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     print(f"Training {args.arch.upper()} | {DEVICE} | "
@@ -94,7 +97,8 @@ def main():
     best_acc, no_improve = 0.0, 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = run_epoch(model, train_loader, criterion, optimizer)
+        train_loss, train_acc = run_epoch(model, train_loader, criterion, optimizer,
+                                          mixup_alpha=args.mixup)
         val_loss,   val_acc   = run_epoch(model, val_loader,   criterion)
         scheduler.step()
 
