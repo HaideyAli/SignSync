@@ -18,6 +18,11 @@ wandb>=0.16.0
 # Phase 4 — Desktop app + Zoom bridge
 PySide6>=6.10.0
 requests>=2.31.0
+# Virtual camera: publishes the captioned feed as a webcam Zoom can select.
+# Needs a backend driver — on Windows install OBS Studio once (free); its
+# installer registers the virtual-camera device and OBS need not be running.
+pyvirtualcam>=0.15.0
+Pillow>=10.0.0          # anti-aliased caption text (TrueType, not cv2 Hershey fonts)
 
 # Phase 5 — Demo
 gradio>=4.0.0
