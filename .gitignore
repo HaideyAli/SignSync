@@ -9,6 +9,8 @@ CLAUDE.md
 data/raw/
 data/landmarks/
 data/models/
+# ~70MB Colab upload artifact, regenerable from data/landmarks/
+data/landmarks.zip
 
 # Trained model checkpoints
 checkpoints/
