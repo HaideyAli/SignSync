@@ -23,6 +23,8 @@ from predictor import RECORD_SECS, SIGN_ONSET_FRAC, MotionTrigger
 CONF_THRESHOLD = 0.80    # per CLAUDE.md
 COOLDOWN_S     = 1.5
 WARMUP_FRAMES  = 30      # frames used to measure real fps before sizing the window
+REFRACTORY_S   = 1.2     # ignore triggers just after a capture — the hand dropping
+                         # back to rest is itself motion and would re-fire instantly
 
 
 class CaptureEngine:
@@ -38,6 +40,7 @@ class CaptureEngine:
         self.fps = 0.0
         self._t0 = time.time()
         self._result: list[np.ndarray] | None = None
+        self._refractory_until = 0.0
 
     @property
     def ready(self) -> bool:
@@ -58,7 +61,7 @@ class CaptureEngine:
         before the detected motion so the sign lands ~SIGN_ONSET_FRAC into
         it; pre_roll=False (manual button) starts fresh, matching how
         record_signs.py collected the training data."""
-        if self.is_recording or not self.ready:
+        if self.is_recording or not self.ready or time.time() < self._refractory_until:
             return False
         self.need = (max(1, self.window - int(self.window * SIGN_ONSET_FRAC))
                     if pre_roll else self.window)
@@ -94,3 +97,4 @@ class CaptureEngine:
             self.need -= 1
             if self.need == 0 and len(self.ring) >= self.window:
                 self._result = list(self.ring)[-self.window:]
+                self._refractory_until = time.time() + REFRACTORY_S
