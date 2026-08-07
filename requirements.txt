@@ -16,7 +16,7 @@ wandb>=0.16.0
 # Phase 3 — Inference (no extra deps)
 
 # Phase 4 — Desktop app + Zoom bridge
-customtkinter>=5.2.0
+PySide6>=6.10.0
 requests>=2.31.0
 
 # Phase 5 — Demo
