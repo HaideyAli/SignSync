@@ -34,15 +34,31 @@ You'll see yourself with the caption bar along the bottom. Everyone in the
 meeting sees the same thing — no host permission and no per-meeting setup,
 and it works in meetings you merely join.
 
-## How it reads you
+## How it reads you — sign along to the rhythm
 
-Each sign is captured over a **4-second window**, because that is exactly how
-the training data was recorded — the model only ever saw signs in that
-geometry. So pace yourself: sign, pause, sign. Roughly one word per 4–5
-seconds, meaning a three-word sentence takes about 15 seconds.
+Press **Start signing** once, then follow the cue on screen. It repeats:
 
-After **3.5 seconds** with no new sign, the sentence is finalized and stays on
-screen until you start the next one.
+```
+get ready... 2.0s     <- hands down, prepare the next sign
+● SIGN NOW   4.0s     <- sign as soon as this appears
+                         (word is recognized, then it loops)
+```
+
+Sign **immediately** when SIGN NOW appears. Your natural reaction delay is
+what puts the sign about 18% into the window — exactly where it sat when the
+training data was recorded. Don't wait for the countdown to run down.
+
+Each word takes ~6 seconds (4s capture + 2s gap), so a three-word sentence is
+about 18 seconds. Press **Stop** when the sentence is done.
+
+Why a fixed rhythm rather than auto-detecting when you start: motion-based
+triggering measured badly here. Its baseline spans ~6.6s of history, so it
+climbs while you sign and fires as the sign *ends* — and `yes` (1.6s of
+motion), `no` (1.5s) and `cool` (0.9s) were missed entirely. `--mode motion`
+still exists if you want to try it, but the cycle is what works.
+
+After **3.5 seconds** with no accepted word, the sentence is finalized and
+stays on screen until you begin the next one.
 
 ## Demo sentences
 

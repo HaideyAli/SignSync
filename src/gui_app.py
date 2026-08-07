@@ -1,11 +1,10 @@
-"""SignBridge companion app: floating window that sits beside a Zoom call,
-reads signs continuously, and publishes a captioned video feed as a virtual
-camera Zoom can select.
+"""SignBridge companion app: floating window beside a Zoom call, publishing a
+captioned video feed as a virtual camera Zoom can select.
 
     python src/gui_app.py --checkpoint checkpoints/best_model_transformer_50_v10.pth
 
-Pick "OBS Virtual Camera" in Zoom ▸ Settings ▸ Video to send the captioned
-feed to the meeting. See docs/DEMO_SCRIPT.md for setup and demo sentences.
+Press Start, then sign along to the countdown; each word joins the sentence.
+See docs/DEMO_SCRIPT.md for Zoom setup and demo sentences.
 """
 import argparse
 import sys
@@ -13,24 +12,26 @@ import sys
 import cv2
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel,
-                                QListWidget, QMainWindow, QPushButton, QTextEdit,
-                                QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget,
+                                QMainWindow, QPushButton, QTextEdit, QVBoxLayout,
+                                QWidget)
 
 from gui_worker import InferenceWorker
 from theme import DARK_QSS
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, checkpoint: str, camera: int, continuous: bool, use_vcam: bool):
+    def __init__(self, checkpoint: str, camera: int, mode: str, use_vcam: bool):
         super().__init__()
         self.setWindowTitle("SignBridge")
         # Stays above other apps including Zoom — the point of a companion panel
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.resize(400, 760)
-        self._build_ui(continuous)
+        self.mode = mode
+        self.cycling = False
+        self._build_ui(mode)
 
-        self.worker = InferenceWorker(checkpoint, camera, continuous, use_vcam)
+        self.worker = InferenceWorker(checkpoint, camera, mode, use_vcam)
         self.worker.frame_ready.connect(self._on_frame)
         self.worker.word_accepted.connect(self._on_word)
         self.worker.sentence_ready.connect(self._on_sentence)
@@ -39,7 +40,7 @@ class MainWindow(QMainWindow):
         self.worker.error.connect(self._on_error)
         self.worker.start()
 
-    def _build_ui(self, continuous: bool) -> None:
+    def _build_ui(self, mode: str) -> None:
         title = QLabel("SignBridge"); title.setObjectName("titleLabel")
         self.vcam_label = QLabel("starting virtual camera...")
         self.vcam_label.setObjectName("sectionLabel"); self.vcam_label.setWordWrap(True)
@@ -49,14 +50,10 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("starting..."); self.status_label.setObjectName("statusLabel")
 
-        self.mode_box = QCheckBox("Continuous — read signs automatically")
-        self.mode_box.setChecked(continuous)
-        self.mode_box.setEnabled(False)   # set at launch; restart to change
-        self.mode_box.setToolTip("Set with --manual at launch; changing it needs a restart")
-
-        self.capture_btn = QPushButton("Capture Sign")
+        # Cycle mode drives the rhythm; manual/motion keep a per-sign button
+        self.capture_btn = QPushButton("Start signing" if mode == "cycle" else "Capture Sign")
         self.capture_btn.setObjectName("captureButton")
-        self.capture_btn.clicked.connect(lambda: self.worker.request_capture())
+        self.capture_btn.clicked.connect(self._on_capture)
 
         words_label = QLabel("RECOGNIZED WORDS"); words_label.setObjectName("sectionLabel")
         self.word_list = QListWidget()
@@ -65,17 +62,15 @@ class MainWindow(QMainWindow):
         self.sentence_box = QTextEdit(); self.sentence_box.setReadOnly(True)
         self.sentence_box.setFixedHeight(70)
 
-        clear_btn = QPushButton("Clear")
-        clear_btn.clicked.connect(self._on_clear)
+        clear_btn = QPushButton("Clear"); clear_btn.clicked.connect(self._on_clear)
         row = QHBoxLayout(); row.addWidget(clear_btn)
 
         layout = QVBoxLayout()
-        for w in (title, self.vcam_label, self.preview, self.status_label, self.mode_box,
+        for w in (title, self.vcam_label, self.preview, self.status_label,
                   self.capture_btn, words_label, self.word_list,
                   sentence_label, self.sentence_box):
             layout.addWidget(w)
         layout.addLayout(row)
-
         container = QWidget(); container.setLayout(layout)
         self.setCentralWidget(container)
 
@@ -110,6 +105,15 @@ class MainWindow(QMainWindow):
     def _on_error(self, message: str) -> None:
         self.status_label.setText(f"error: {message}")
 
+    def _on_capture(self) -> None:
+        """Cycle mode toggles the rhythm; other modes capture one sign."""
+        if self.mode != "cycle":
+            self.worker.request_capture()
+            return
+        self.cycling = not self.cycling
+        self.worker.set_cycling(self.cycling)
+        self.capture_btn.setText("Stop" if self.cycling else "Start signing")
+
     def _on_clear(self) -> None:
         self.worker.request_clear()
         self.word_list.clear()
@@ -130,15 +134,18 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", default="checkpoints/best_model_transformer_50_v10.pth")
     p.add_argument("--camera", type=int, default=0)
-    p.add_argument("--manual", action="store_true",
-                   help="button-triggered capture instead of continuous")
+    # motion is kept but not recommended: its baseline spans ~6.6s at the real
+    # loop rate, so it climbs while you sign and fires as the sign ends
+    p.add_argument("--mode", default="cycle", choices=["cycle", "manual", "motion"],
+                   help="cycle: sign along to a countdown (default); "
+                        "manual: one sign per button press; motion: auto-trigger")
     p.add_argument("--no-vcam", action="store_true", help="window only, no virtual camera")
     args = p.parse_args()
 
     app = QApplication(sys.argv)
     app.setStyleSheet(DARK_QSS)
     win = MainWindow(args.checkpoint, args.camera,
-                     continuous=not args.manual, use_vcam=not args.no_vcam)
+                     mode=args.mode, use_vcam=not args.no_vcam)
     win.show()
     sys.exit(app.exec())
 

@@ -6,18 +6,17 @@ a full frame per signal at camera rate outruns the UI thread and Qt's queued
 connections grow unbounded. The virtual camera still gets every frame.
 """
 import time
-from pathlib import Path
 
 import cv2
 import mediapipe as mp
-from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 from PySide6.QtCore import QThread, Signal
 
 from camera import open_camera
 from caption_render import draw_caption
 from capture_engine import CaptureEngine
-from extract_landmarks import HOLISTIC_MODEL_URL, ensure_model, landmarks_from_frame
+from extract_landmarks import landmarks_from_frame
+from holistic import holistic_options
 from predictor import SignPredictor, hands_visible
 from session import SignSession
 from virtual_cam import VirtualCam
@@ -36,16 +35,17 @@ class InferenceWorker(QThread):
     error            = Signal(str)
 
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
-                 continuous: bool = True, use_vcam: bool = True):
+                 mode: str = "cycle", use_vcam: bool = True):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index
-        self.continuous = continuous
+        self.mode = mode                 # "cycle" | "manual" | "motion"
         self.use_vcam = use_vcam
         self.session = SignSession()
         self._running = False
         self._capture_requested = False
         self._clear_requested = False
+        self._cycle_request: bool | None = None
 
     # --- called from the UI thread; single-flag writes are safe under the GIL ---
     def request_capture(self) -> None:
@@ -54,9 +54,11 @@ class InferenceWorker(QThread):
     def request_clear(self) -> None:
         self._clear_requested = True
 
+    def set_cycling(self, on: bool) -> None:
+        self._cycle_request = on
+
     def stop(self) -> None:
         self._running = False
-
 
     def run(self) -> None:
         try:
@@ -66,17 +68,9 @@ class InferenceWorker(QThread):
 
     def _run(self) -> None:
         predictor = SignPredictor(self.checkpoint_path)
-        engine = CaptureEngine(auto=self.continuous)
+        engine = CaptureEngine(auto=(self.mode == "motion"))
 
-        models_dir = Path("data/models"); models_dir.mkdir(parents=True, exist_ok=True)
-        task = models_dir / "holistic_landmarker.task"
-        ensure_model(HOLISTIC_MODEL_URL, task)
-        opts = mp_vision.HolisticLandmarkerOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=str(task)),
-            # IMAGE mode matches extraction; VIDEO/LIVE_STREAM add temporal
-            # smoothing that would shift live features off the training distribution
-            running_mode=mp_vision.RunningMode.IMAGE)
-
+        opts = holistic_options()
         self.status_changed.emit("opening camera...")
         cap = open_camera(self.camera_index)
         if not cap.isOpened():
@@ -102,18 +96,19 @@ class InferenceWorker(QThread):
                         detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)))
                     engine.push_frame(lm)
 
+                    if self._cycle_request is not None:
+                        engine.start_cycle() if self._cycle_request else engine.stop_cycle()
+                        self._cycle_request = None
                     if self._clear_requested:
                         self._clear_requested = False
                         self.session.clear()
                     if self._capture_requested:
                         self._capture_requested = False
-                        if engine.start_capture(pre_roll=False):
-                            self.status_changed.emit("recording")
+                        engine.start_capture(pre_roll=False)
 
                     frames = engine.poll_result()
                     if frames is not None:
                         self._handle_capture(predictor, frames)
-
                     sentence = self.session.tick()
                     if sentence:
                         self.sentence_ready.emit(sentence)
@@ -132,12 +127,16 @@ class InferenceWorker(QThread):
                 vcam.close()
 
     def _subtitle(self, engine: CaptureEngine) -> str:
+        """Drives the on-screen cue — the signer needs to know *when* to start,
+        which is the whole point of cycle mode."""
         if engine.is_recording:
-            return f"reading sign...  {engine.seconds_remaining:.1f}s"
+            return f"● SIGN NOW   {engine.seconds_remaining:.1f}s"
+        if engine.cycling:
+            return f"get ready...  {engine.seconds_until_capture:.1f}s"
         if self.session.is_building:
             return self.session.subtitle
-        return (self.session.rejected or
-                ("watching for signs..." if self.continuous else "press Capture Sign"))
+        return self.session.rejected or ("press Start" if self.mode == "cycle"
+                                         else "press Capture Sign")
 
     def _handle_capture(self, predictor: SignPredictor, frames) -> None:
         if not hands_visible(frames):
