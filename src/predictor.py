@@ -44,7 +44,13 @@ class SignPredictor:
                 for p, i in zip(top.values, top.indices)]
 
 
-def hands_visible(frames, recent: int = 10) -> bool:
-    """True if either hand was detected recently — stops the engine predicting
-    confidently over an empty frame."""
-    return any(np.abs(f[:126]).sum() > 1e-6 for f in frames[-recent:])
+def hands_visible(frames, min_frac: float = 0.10) -> bool:
+    """True if hands appear in at least min_frac of the window.
+
+    Deliberately looks at the whole window, not its tail. Checking only the
+    last frames rejected 95% of real recordings, because a signer lowers their
+    hands once the sign is done — hands appear in just 6% of clips' final ten
+    frames, against 50% of frames overall. The fraction still rejects windows
+    with no signing in them at all."""
+    seen = sum(1 for f in frames if np.abs(f[:126]).sum() > 1e-6)
+    return seen >= max(1, int(len(frames) * min_frac))

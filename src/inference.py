@@ -88,7 +88,7 @@ def main():
                 need -= 1
                 if need == 0 and len(ring) >= window:
                     frames = list(ring)[-window:]
-                    if hands_visible(frames, recent=window):
+                    if hands_visible(frames):
                         results = predictor.predict(frames)
                         if results[0][1] >= CONF_THRESHOLD:
                             last_emit = time.time()   # zoom_bridge.send_to_zoom_chat() here
