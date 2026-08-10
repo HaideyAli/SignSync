@@ -23,12 +23,18 @@ DEFAULT_GAIN = 255         # Setting exposure manually also disables auto-gain,
                            # frame rate at all (29.9 fps at every level) and
                            # took brightness 2.2 -> 63.3 of 255 here, about 11x
                            # what auto-exposure managed in the same room.
+DEFAULT_BRIGHTNESS = 200   # Sits at 128 unless set. Raising it took mean
+                           # brightness 76 -> 152 of 255 at no frame-rate cost,
+                           # where the optical alternative (exposure -4) would
+                           # have halved the rate to 17 fps. 255 reaches ~200
+                           # but starts to wash out.
 DSHOW_MANUAL_EXPOSURE = 0.25   # CAP_PROP_AUTO_EXPOSURE value meaning "manual"
 
 
 def open_camera(index: int = 0, width: int = 0, height: int = 0,
                 fps: float = 0.0, exposure: float | None = DEFAULT_EXPOSURE,
-                gain: float | None = DEFAULT_GAIN) -> cv2.VideoCapture:
+                gain: float | None = DEFAULT_GAIN,
+                brightness: float | None = DEFAULT_BRIGHTNESS) -> cv2.VideoCapture:
     """Open the webcam, optionally forcing resolution/rate/exposure/gain.
 
     exposure=None leaves auto-exposure alone, which caps the camera at 15fps.
@@ -56,6 +62,8 @@ def open_camera(index: int = 0, width: int = 0, height: int = 0,
         cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
         if gain is not None:
             cap.set(cv2.CAP_PROP_GAIN, gain)
+    if brightness is not None:
+        cap.set(cv2.CAP_PROP_BRIGHTNESS, brightness)
     return cap
 
 

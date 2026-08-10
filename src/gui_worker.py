@@ -4,9 +4,9 @@ Emits the *captioned* frame — the same pixels sent to the virtual camera — s
 the preview shows what Zoom participants see.
 
 Detection runs on its own thread (detect_worker.py): MediaPipe's ~42.7ms does
-not fit inside a 30fps frame budget. This loop only reads, captions and
-publishes, leaving the camera as the pacer. Preview emission is throttled and
-downscaled, since full frames at camera rate outrun the UI thread.
+not fit a 30fps budget. This loop only reads, captions and publishes, leaving
+the camera as the pacer. Preview emission is throttled and downscaled, since
+full frames at camera rate outrun the UI thread.
 """
 import time
 
@@ -21,7 +21,7 @@ from predictor import SignPredictor
 from session import SignSession
 from virtual_cam import VirtualCam
 
-PREVIEW_FPS = 15.0    # on-screen only; the virtual camera gets every frame
+PREVIEW_FPS = 15.0    # on-screen only; the vcam gets every frame
 PREVIEW_H   = 360     # preview widget is ~300px tall; see camera.thumbnail
 
 
@@ -37,14 +37,15 @@ class InferenceWorker(QThread):
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
                  mode: str = "live", use_vcam: bool = True,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -5.0, gain: float | None = 255.0):
+                 exposure: float | None = -5.0, gain: float | None = 255.0,
+                 brightness: float | None = 200.0):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index
         self.mode = mode                 # "live" | "cycle" | "manual"
         self.use_vcam = use_vcam
         self.width, self.height, self.fps = width, height, fps
-        self.exposure, self.gain = exposure, gain
+        self.exposure, self.gain, self.bright = exposure, gain, brightness
         self.session = SignSession()
         self._latest = None              # newest frame, for the detector thread
         self._running = False
@@ -52,7 +53,7 @@ class InferenceWorker(QThread):
         self._clear_requested = False
         self._cycle_request: bool | None = None
 
-    # --- called from the UI thread; single-flag writes are safe under the GIL ---
+    # --- UI thread calls these; single-flag writes are safe under the GIL ---
     def request_capture(self) -> None:
         self._capture_requested = True
 
@@ -73,9 +74,9 @@ class InferenceWorker(QThread):
             self.error.emit(str(e))
 
     def _on_word(self, word: str, conf: float) -> None:
+        # tick() only fires after a pause; without the second emit the panel
+        # stays blank while the video caption already shows the phrase
         self.word_accepted.emit(word, conf)
-        # tick() only fires after a pause; without this the panel stays blank
-        # while the video caption already shows the phrase
         self.sentence_ready.emit(self.session.caption)
 
     def _run(self) -> None:
@@ -86,7 +87,7 @@ class InferenceWorker(QThread):
 
         self.status_changed.emit("opening camera...")
         cap = open_camera(self.camera_index, self.width, self.height,
-                          self.fps, self.exposure, self.gain)
+                          self.fps, self.exposure, self.gain, self.bright)
         if not cap.isOpened():
             self.error.emit("cannot open webcam")
             return
@@ -96,7 +97,6 @@ class InferenceWorker(QThread):
         vcam = VirtualCam(w, h, self.fps or 30.0) if self.use_vcam else None
         if vcam is not None:
             self.vcam_status.emit(vcam.available, vcam.device_name or vcam.error or "")
-
         detector = DetectorThread(
             lambda: self._latest, predictor, engine, self.session,
             on_word=self._on_word, on_status=self.status_changed.emit,

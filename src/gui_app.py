@@ -21,7 +21,8 @@ from theme import DARK_QSS
 class MainWindow(QMainWindow):
     def __init__(self, checkpoint: str, camera: int, mode: str, use_vcam: bool,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -5.0, gain: float | None = 255.0):
+                 exposure: float | None = -5.0, gain: float | None = 255.0,
+                 brightness: float | None = 200.0):
         super().__init__()
         self.setWindowTitle("SignBridge")
         # Stays above other apps including Zoom — the point of a companion panel
@@ -32,7 +33,7 @@ class MainWindow(QMainWindow):
         build_ui(self, mode)
 
         self.worker = InferenceWorker(checkpoint, camera, mode, use_vcam,
-                                      width, height, fps, exposure, gain)
+                                      width, height, fps, exposure, gain, brightness)
         self.worker.frame_ready.connect(self._on_frame)
         self.worker.word_accepted.connect(self._on_word)
         self.worker.sentence_ready.connect(self._on_sentence)
@@ -114,6 +115,9 @@ def main() -> None:
     # Manual exposure disables auto-gain, so gain must be set or the picture is
     # nearly black. Costs no frame rate; lower it if the image looks noisy.
     p.add_argument("--gain", type=float, default=255.0, help="sensor gain 0-255")
+    # Doubles brightness for free; the optical route (--exposure -4) halves fps
+    p.add_argument("--brightness", type=float, default=200.0,
+                   help="camera brightness 0-255; raise for a brighter picture")
     args = p.parse_args()
     exposure = None if str(args.exposure).lower() == "auto" else float(args.exposure)
 
@@ -122,7 +126,7 @@ def main() -> None:
     win = MainWindow(args.checkpoint, args.camera, mode=args.mode,
                      use_vcam=not args.no_vcam, width=args.width,
                      height=args.height, fps=args.fps, exposure=exposure,
-                     gain=args.gain)
+                     gain=args.gain, brightness=args.brightness)
     win.show()
     sys.exit(app.exec())
 
