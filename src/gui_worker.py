@@ -35,8 +35,8 @@ class InferenceWorker(QThread):
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
                  mode: str = "live", use_vcam: bool = True,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -5.0, gain: float | None = 200.0,
-                 brightness: float | None = 140.0, gamma: float | None = 0.55):
+                 exposure: float | None = -5.0, gain: float | None = 220.0,
+                 brightness: float | None = 128.0, gamma: float | None = 0.80):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index

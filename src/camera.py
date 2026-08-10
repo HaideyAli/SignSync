@@ -17,21 +17,23 @@ import numpy as np
 
 DEFAULT_EXPOSURE = -5      # 1/32s; measured 29.9 fps and twice the light of -6.
                            # -4 doubles light again but drops to 17 fps.
-DEFAULT_GAIN = 200         # Setting exposure manually also disables auto-gain,
+DEFAULT_GAIN = 220         # Setting exposure manually also disables auto-gain,
                            # leaving the sensor at minimum amplification — the
                            # cause of an almost black picture. Gain costs no
                            # frame rate at all (29.9 fps at every level), but
                            # amplifies noise with signal, so it is kept below
                            # maximum and gamma does the rest.
-DEFAULT_BRIGHTNESS = 140   # This control is a black-level *offset*, so pushing
+DEFAULT_BRIGHTNESS = 128   # This control is a black-level *offset*, so pushing
                            # it high lifts blacks and flattens the picture: at
                            # 200 the darkest 5% of pixels sat at 74/255 — grey,
-                           # not black — which reads as washed out. Kept near
-                           # the 128 default so blacks stay black.
-DEFAULT_GAMMA = 0.55       # Brightens midtones without lifting blacks, which
-                           # is what BRIGHTNESS cannot do. Measured against the
-                           # flat b200/g255 setup: same contrast, blacks back
-                           # near zero, and less grain. Costs 2.9ms at 1080p.
+                           # not black — which reads as a milky haze over the
+                           # whole picture. Left at the neutral default so
+                           # blacks stay black; gamma does the brightening.
+DEFAULT_GAMMA = 0.80       # Brightens midtones without lifting blacks, which
+                           # is what BRIGHTNESS cannot do. Measured at 1080p
+                           # against b140/g200/0.55: contrast 52.6 -> 59.9 and
+                           # blacks 53 -> 5, at the same grain and frame rate.
+                           # Costs 2.9ms.
 DSHOW_MANUAL_EXPOSURE = 0.25   # CAP_PROP_AUTO_EXPOSURE value meaning "manual"
 
 

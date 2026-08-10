@@ -21,8 +21,8 @@ from theme import DARK_QSS
 class MainWindow(QMainWindow):
     def __init__(self, checkpoint: str, camera: int, mode: str, use_vcam: bool,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -5.0, gain: float | None = 200.0,
-                 brightness: float | None = 140.0, gamma: float | None = 0.55):
+                 exposure: float | None = -5.0, gain: float | None = 220.0,
+                 brightness: float | None = 128.0, gamma: float | None = 0.80):
         super().__init__()
         self.setWindowTitle("SignBridge")
         # Stays above other apps including Zoom — the point of a companion panel
@@ -114,11 +114,11 @@ def main() -> None:
                    help="manual exposure, or 'auto' (auto caps the camera at 15fps)")
     # Manual exposure disables auto-gain, so gain must be set or the picture is
     # nearly black. Costs no frame rate; lower it if the image looks noisy.
-    p.add_argument("--gain", type=float, default=200.0, help="sensor gain 0-255")
+    p.add_argument("--gain", type=float, default=220.0, help="sensor gain 0-255")
     # Doubles brightness for free; the optical route (--exposure -4) halves fps
-    p.add_argument("--brightness", type=float, default=140.0,
+    p.add_argument("--brightness", type=float, default=128.0,
                    help="camera black level 0-255; high values wash the picture out")
-    p.add_argument("--gamma", type=float, default=0.55,
+    p.add_argument("--gamma", type=float, default=0.80,
                    help="output tone curve; lower is brighter, keeps blacks black")
     args = p.parse_args()
     exposure = None if str(args.exposure).lower() == "auto" else float(args.exposure)
