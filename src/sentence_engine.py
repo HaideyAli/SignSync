@@ -20,6 +20,8 @@ by explicit choice (no API key / network dependency risk during a demo).
 from enum import Enum, auto
 from typing import Callable
 
+from demo_phrases import DEMO_PHRASES, lookup, partial
+
 
 class Role(Enum):
     INTERJECTION = auto()   # yes, no
@@ -47,7 +49,6 @@ WORD_ROLES: dict[str, Role] = {
 
 TIME_PHRASES = {"thursday": "on Thursday", "thanksgiving": "on Thanksgiving",
                 "later": "later", "before": "before", "last": "last time"}
-
 
 def _role(word: str) -> Role:
     return WORD_ROLES.get(word, Role.NOUN)
@@ -78,6 +79,12 @@ def assemble_sentence(words: list[str], refine_fn: Callable[[str], str] | None =
     """Ordered recognized words -> best-guess English sentence."""
     if not words:
         return ""
+
+    # Hand-written demo glosses win outright; a phrase still being signed
+    # shows its gloss so far rather than a wrong guess from the rules
+    phrase = lookup(words) or partial(words)
+    if phrase:
+        return refine_fn(phrase) if refine_fn else phrase
 
     remaining = list(words)
     lead     = remaining.pop(0) if remaining and _role(remaining[0]) is Role.INTERJECTION else None
@@ -135,4 +142,10 @@ if __name__ == "__main__":
         status = "OK" if got == expected else "FAIL"
         print(f"{status}: {words} -> {got!r}")
         assert got == expected, f"expected {expected!r}, got {got!r}"
-    print(f"\nall {len(cases)} cases passed")
+
+    for gloss, expected in DEMO_PHRASES.items():
+        got = assemble_sentence(list(gloss))
+        assert got == expected, f"{gloss}: expected {expected!r}, got {got!r}"
+        print(f"OK: {' '.join(g.upper() for g in gloss)} -> {got!r}")
+
+    print(f"\nall {len(cases)} rule cases + {len(DEMO_PHRASES)} demo phrases passed")

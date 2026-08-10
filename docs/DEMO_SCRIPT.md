@@ -65,12 +65,37 @@ stays on screen until you begin the next one.
 Every word below scores **100% top-1 accuracy** on your own recordings
 (`python scripts/rank_signs.py`). Sign them in the order shown.
 
+### Scripted phrases (exact translations)
+
+These ten have hand-written translations in `src/demo_phrases.py`, so they
+produce proper English rather than generic rule output — the rules assume an
+implied "I", which is wrong when the subject is signed (COUSIN, DOCTOR).
+Part-way through, the caption shows the gloss so far ("Cousin play...") and
+snaps to the full sentence on the final word.
+
+| Sign in order | Caption produced |
+|---|---|
+| COUSIN → PLAY → BASKETBALL | The cousin plays basketball. |
+| DOCTOR → HELP → COUSIN | The doctor helps the cousin. |
+| COUSIN → WALK → LATER | The cousin will walk later. |
+| DOCTOR → GO → THURSDAY | The doctor will go on Thursday. |
+| TALL → COUSIN → PLAY → BASKETBALL | The tall cousin plays basketball. |
+| COUSIN → LIKE → FISH | The cousin likes fish. |
+| WHO → PLAY → BASKETBALL | Who plays basketball? |
+| COUSIN → GO → BEFORE → THURSDAY | The cousin will go before Thursday. |
+| DEAF → COUSIN → PLAY → BASKETBALL | The deaf cousin plays basketball. |
+| DOCTOR → PLAY → BASKETBALL → LATER | The doctor will play basketball later. |
+
+Add more by appending to `DEMO_PHRASES` in `src/demo_phrases.py` — keys are
+lowercase word tuples in signing order.
+
+### Anything else falls back to the rules
+
 | Sign in order | Caption produced |
 |---|---|
 | yes → play → basketball | Yes, I play basketball. |
 | go → bowling → thursday | I go bowling on Thursday. |
 | help → mother → thursday | I help mother on Thursday. |
-| give → letter → later | I give letter later. |
 | who → doctor | Who is the doctor? |
 | black → shirt | Black shirt. |
 
