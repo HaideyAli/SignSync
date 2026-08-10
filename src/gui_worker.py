@@ -111,9 +111,8 @@ class InferenceWorker(QThread):
                     frames = engine.poll_result()
                     if frames is not None:
                         self._handle_capture(predictor, frames)
-                    sentence = self.session.tick()
-                    if sentence:
-                        self.sentence_ready.emit(sentence)
+                    if self.session.tick():
+                        self.sentence_ready.emit(self.session.caption)
 
                     out = draw_caption(cv2.flip(small, 1), self.session.caption,
                                        self._subtitle(engine))
