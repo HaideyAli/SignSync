@@ -29,9 +29,7 @@ class Role(Enum):
     TIME         = auto()   # before, last, later, thursday, thanksgiving
     VERB         = auto()   # change, cheat, drink, give, go, graduate, help, like, play, walk
     ADJECTIVE    = auto()   # black, cool, dark, deaf, full, hot, many, short, tall, thin
-    NOUN         = auto()   # accident, apple, basketball, bed, bird, bowling, candy, computer,
-                             # corn, cousin, doctor, dog, family, fish, language, letter, man,
-                             # mother, pizza, shirt, woman
+    NOUN         = auto()   # everything else in data/labels_50.json
 
 
 WORD_ROLES: dict[str, Role] = {
@@ -49,6 +47,7 @@ WORD_ROLES: dict[str, Role] = {
 
 TIME_PHRASES = {"thursday": "on Thursday", "thanksgiving": "on Thanksgiving",
                 "later": "later", "before": "before", "last": "last time"}
+
 
 def _role(word: str) -> Role:
     return WORD_ROLES.get(word, Role.NOUN)
