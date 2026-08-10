@@ -65,3 +65,12 @@ def crop_4_3(frame: np.ndarray) -> np.ndarray:
         return frame                       # already 4:3 or taller
     x0 = (w - target_w) // 2
     return frame[:, x0:x0 + target_w]
+
+
+def thumbnail(frame: np.ndarray, height: int) -> np.ndarray:
+    """Downscale for the on-screen preview. Shipping full 1080p frames to the
+    UI queues ~6MB each and makes the UI thread rescale them."""
+    scale = height / frame.shape[0]
+    if scale >= 1:
+        return frame
+    return cv2.resize(frame, (int(frame.shape[1] * scale), height))

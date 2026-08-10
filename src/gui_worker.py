@@ -1,27 +1,29 @@
-"""Camera + MediaPipe + prediction loop, running off the GUI thread.
+"""Video loop, running off the GUI thread.
 
 Emits the *captioned* frame — the same pixels sent to the virtual camera — so
-the preview shows what Zoom participants see. Preview emission is throttled:
-a frame per signal at camera rate outruns the UI thread and Qt's queued
-connections grow unbounded. The virtual camera still gets every frame."""
+the preview shows what Zoom participants see.
+
+Detection runs on its own thread (detect_worker.py): MediaPipe's ~42.7ms does
+not fit inside a 30fps frame budget. This loop only reads, captions and
+publishes, leaving the camera as the pacer. Preview emission is throttled and
+downscaled, since full frames at camera rate outrun the UI thread.
+"""
 import time
 
 import cv2
-import mediapipe as mp
-from mediapipe.tasks.python import vision as mp_vision
 from PySide6.QtCore import QThread, Signal
 
-from camera import open_camera
+from camera import open_camera, thumbnail
 from caption_render import draw_caption
 from capture_engine import CaptureEngine
-from extract_landmarks import landmarks_from_frame
-from holistic import holistic_options
-from predictor import SignPredictor, hands_visible
+from detect_worker import DetectorThread
+from predictor import SignPredictor
 from session import SignSession
 from virtual_cam import VirtualCam
 
-W, H = 640, 480       # must match extraction so landmark scale is consistent
 PREVIEW_FPS = 15.0    # on-screen only; the virtual camera gets every frame
+PREVIEW_H   = 360     # preview widget is ~300px tall; see camera.thumbnail
+
 
 class InferenceWorker(QThread):
     # frames are numpy arrays — not in Qt's registered type table, so `object`
@@ -33,13 +35,17 @@ class InferenceWorker(QThread):
     error            = Signal(str)
 
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
-                 mode: str = "live", use_vcam: bool = True):
+                 mode: str = "live", use_vcam: bool = True,
+                 width: int = 1920, height: int = 1080, fps: float = 30.0,
+                 exposure: float | None = -6.0):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index
         self.mode = mode                 # "live" | "cycle" | "manual"
         self.use_vcam = use_vcam
+        self.width, self.height, self.fps, self.exposure = width, height, fps, exposure
         self.session = SignSession()
+        self._latest = None              # newest frame, for the detector thread
         self._running = False
         self._capture_requested = False
         self._clear_requested = False
@@ -64,63 +70,69 @@ class InferenceWorker(QThread):
             self._run()
         except Exception as e:
             self.error.emit(str(e))
+
+    def _on_word(self, word: str, conf: float) -> None:
+        self.word_accepted.emit(word, conf)
+        # tick() only fires after a pause; without this the panel stays blank
+        # while the video caption already shows the phrase
+        self.sentence_ready.emit(self.session.caption)
+
     def _run(self) -> None:
         predictor = SignPredictor(self.checkpoint_path)
         engine = CaptureEngine()
         start, stop = ((engine.start_live, engine.stop_live) if self.mode == "live"
                        else (engine.start_cycle, engine.stop_cycle))
 
-        opts = holistic_options()
         self.status_changed.emit("opening camera...")
-        cap = open_camera(self.camera_index)
+        cap = open_camera(self.camera_index, self.width, self.height,
+                          self.fps, self.exposure)
         if not cap.isOpened():
             self.error.emit("cannot open webcam")
             return
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.width
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.height
 
-        vcam = VirtualCam(W, H, 30.0) if self.use_vcam else None
+        vcam = VirtualCam(w, h, self.fps or 30.0) if self.use_vcam else None
         if vcam is not None:
             self.vcam_status.emit(vcam.available, vcam.device_name or vcam.error or "")
+
+        detector = DetectorThread(
+            lambda: self._latest, predictor, engine, self.session,
+            on_word=self._on_word, on_status=self.status_changed.emit,
+            on_error=self.error.emit)
+        detector.start()
+
         last_preview, self._running = 0.0, True
         try:
-            with mp_vision.HolisticLandmarker.create_from_options(opts) as detector:
-                while self._running:
-                    ok, frame = cap.read()
-                    if not ok:
-                        self.error.emit("camera read failed")
-                        break
+            while self._running:
+                ok, frame = cap.read()
+                if not ok:
+                    self.error.emit("camera read failed")
+                    break
+                self._latest = frame          # atomic rebind; detector picks it up
 
-                    # Detect on the un-flipped frame — mirroring swaps hand identity
-                    small = cv2.resize(frame, (W, H))
-                    rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-                    lm    = landmarks_from_frame(
-                        detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)))
-                    engine.push_frame(lm)
+                if self._cycle_request is not None:
+                    start() if self._cycle_request else stop()
+                    self._cycle_request = None
+                if self._clear_requested:
+                    self._clear_requested = False
+                    self.session.clear()
+                if self._capture_requested:
+                    self._capture_requested = False
+                    engine.start_capture(pre_roll=False)
 
-                    if self._cycle_request is not None:
-                        start() if self._cycle_request else stop()
-                        self._cycle_request = None
-                    if self._clear_requested:
-                        self._clear_requested = False
-                        self.session.clear()
-                    if self._capture_requested:
-                        self._capture_requested = False
-                        engine.start_capture(pre_roll=False)
-
-                    frames = engine.poll_result()
-                    if frames is not None:
-                        self._handle_capture(predictor, frames)
-                    if self.session.tick():
-                        self.sentence_ready.emit(self.session.caption)
-
-                    out = draw_caption(cv2.flip(small, 1), self.session.caption,
-                                       self._subtitle(engine))
-                    if vcam is not None:
-                        vcam.send(out)
-                    now = time.time()
-                    if now - last_preview >= 1.0 / PREVIEW_FPS:
-                        last_preview = now
-                        self.frame_ready.emit(out)
+                # Mirror for display only — the detector gets the un-flipped
+                # frame, since mirroring swaps hand identity
+                out = draw_caption(cv2.flip(frame, 1), self.session.caption,
+                                   self._subtitle(engine))
+                if vcam is not None:
+                    vcam.send(out)
+                now = time.time()
+                if now - last_preview >= 1.0 / PREVIEW_FPS:
+                    last_preview = now
+                    self.frame_ready.emit(thumbnail(out, PREVIEW_H))
         finally:
+            detector.stop(); detector.join(timeout=2.0)
             cap.release()
             if vcam is not None:
                 vcam.close()
@@ -135,16 +147,3 @@ class InferenceWorker(QThread):
         if engine.cycling:
             return f"get ready...  {engine.seconds_until_capture:.1f}s"
         return self.session.subtitle or self.session.rejected
-
-    def _handle_capture(self, predictor: SignPredictor, frames) -> None:
-        if not hands_visible(frames):
-            self.status_changed.emit("no hands detected")
-            return
-        results = predictor.predict(frames)
-        accepted, message = self.session.offer(results)
-        if accepted:
-            self.word_accepted.emit(*results[0])
-            # tick() only fires after a pause; without this the panel stays
-            # blank while the video caption already shows the phrase
-            self.sentence_ready.emit(self.session.caption)
-        self.status_changed.emit(message)
