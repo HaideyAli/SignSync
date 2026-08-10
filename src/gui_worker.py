@@ -147,4 +147,8 @@ class InferenceWorker(QThread):
         accepted, message = self.session.offer(results)
         if accepted:
             self.word_accepted.emit(*results[0])
+            # Sentence-so-far, immediately: tick() only fires after PAUSE_SECS
+            # of silence, so the panel would otherwise sit blank for seconds
+            # after a phrase completes while the video caption already shows it
+            self.sentence_ready.emit(self.session.caption)
         self.status_changed.emit(message)
