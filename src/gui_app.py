@@ -21,7 +21,7 @@ from theme import DARK_QSS
 class MainWindow(QMainWindow):
     def __init__(self, checkpoint: str, camera: int, mode: str, use_vcam: bool,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -6.0):
+                 exposure: float | None = -5.0, gain: float | None = 255.0):
         super().__init__()
         self.setWindowTitle("SignBridge")
         # Stays above other apps including Zoom — the point of a companion panel
@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
         build_ui(self, mode)
 
         self.worker = InferenceWorker(checkpoint, camera, mode, use_vcam,
-                                      width, height, fps, exposure)
+                                      width, height, fps, exposure, gain)
         self.worker.frame_ready.connect(self._on_frame)
         self.worker.word_accepted.connect(self._on_word)
         self.worker.sentence_ready.connect(self._on_sentence)
@@ -109,8 +109,11 @@ def main() -> None:
     p.add_argument("--fps",    type=float, default=30.0)
     # Auto-exposure is what pins the camera to 15fps (exposure -4 = 1/16s);
     # a fixed shutter unlocks 30 but needs decent light. "auto" restores it.
-    p.add_argument("--exposure", default="-6",
+    p.add_argument("--exposure", default="-5",
                    help="manual exposure, or 'auto' (auto caps the camera at 15fps)")
+    # Manual exposure disables auto-gain, so gain must be set or the picture is
+    # nearly black. Costs no frame rate; lower it if the image looks noisy.
+    p.add_argument("--gain", type=float, default=255.0, help="sensor gain 0-255")
     args = p.parse_args()
     exposure = None if str(args.exposure).lower() == "auto" else float(args.exposure)
 
@@ -118,7 +121,8 @@ def main() -> None:
     app.setStyleSheet(DARK_QSS)
     win = MainWindow(args.checkpoint, args.camera, mode=args.mode,
                      use_vcam=not args.no_vcam, width=args.width,
-                     height=args.height, fps=args.fps, exposure=exposure)
+                     height=args.height, fps=args.fps, exposure=exposure,
+                     gain=args.gain)
     win.show()
     sys.exit(app.exec())
 

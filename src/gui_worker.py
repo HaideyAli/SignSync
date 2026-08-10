@@ -37,13 +37,14 @@ class InferenceWorker(QThread):
     def __init__(self, checkpoint_path: str, camera_index: int = 0,
                  mode: str = "live", use_vcam: bool = True,
                  width: int = 1920, height: int = 1080, fps: float = 30.0,
-                 exposure: float | None = -6.0):
+                 exposure: float | None = -5.0, gain: float | None = 255.0):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.camera_index = camera_index
         self.mode = mode                 # "live" | "cycle" | "manual"
         self.use_vcam = use_vcam
-        self.width, self.height, self.fps, self.exposure = width, height, fps, exposure
+        self.width, self.height, self.fps = width, height, fps
+        self.exposure, self.gain = exposure, gain
         self.session = SignSession()
         self._latest = None              # newest frame, for the detector thread
         self._running = False
@@ -85,7 +86,7 @@ class InferenceWorker(QThread):
 
         self.status_changed.emit("opening camera...")
         cap = open_camera(self.camera_index, self.width, self.height,
-                          self.fps, self.exposure)
+                          self.fps, self.exposure, self.gain)
         if not cap.isOpened():
             self.error.emit("cannot open webcam")
             return

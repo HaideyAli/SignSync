@@ -15,17 +15,25 @@ import sys
 import cv2
 import numpy as np
 
-DEFAULT_EXPOSURE = -6      # 1/64s; measured 30.1 fps. -4 (auto) gives 15 fps.
+DEFAULT_EXPOSURE = -5      # 1/32s; measured 29.9 fps and twice the light of -6.
+                           # -4 doubles light again but drops to 17 fps.
+DEFAULT_GAIN = 255         # Setting exposure manually also disables auto-gain,
+                           # leaving the sensor at minimum amplification — the
+                           # cause of an almost black picture. Gain costs no
+                           # frame rate at all (29.9 fps at every level) and
+                           # took brightness 2.2 -> 63.3 of 255 here, about 11x
+                           # what auto-exposure managed in the same room.
 DSHOW_MANUAL_EXPOSURE = 0.25   # CAP_PROP_AUTO_EXPOSURE value meaning "manual"
 
 
 def open_camera(index: int = 0, width: int = 0, height: int = 0,
-                fps: float = 0.0, exposure: float | None = DEFAULT_EXPOSURE
-                ) -> cv2.VideoCapture:
-    """Open the webcam, optionally forcing resolution/rate/exposure.
+                fps: float = 0.0, exposure: float | None = DEFAULT_EXPOSURE,
+                gain: float | None = DEFAULT_GAIN) -> cv2.VideoCapture:
+    """Open the webcam, optionally forcing resolution/rate/exposure/gain.
 
-    exposure=None leaves auto-exposure alone, which is correct in dim rooms
-    but caps the camera at 15fps."""
+    exposure=None leaves auto-exposure alone, which caps the camera at 15fps.
+    Whenever exposure is set manually, gain must be set too — the driver stops
+    adjusting it and the picture goes nearly black otherwise."""
     cap = None
     if sys.platform == "win32":
         cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
@@ -46,6 +54,8 @@ def open_camera(index: int = 0, width: int = 0, height: int = 0,
         # Order matters: auto must be disabled before a manual value sticks
         cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, DSHOW_MANUAL_EXPOSURE)
         cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+        if gain is not None:
+            cap.set(cv2.CAP_PROP_GAIN, gain)
     return cap
 
 
