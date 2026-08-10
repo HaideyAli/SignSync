@@ -60,16 +60,21 @@ def _build_overlay(w: int, bar_h: int, text: str, subtitle: str):
     draw = ImageDraw.Draw(img)
     margin, max_w = int(w * 0.05), w - 2 * int(w * 0.05)
 
-    lines, font = [], _font(30)
+    # Sizes are relative to frame height, not fixed pixels: the ladder was
+    # tuned at 480p and would render illegibly small on a 1080p feed.
+    scale = bar_h / (480 * BAR_HEIGHT_FRAC)
+    ladder = [max(11, int(round(s * scale))) for s in (30, 26, 22, 19, 16)]
+
+    lines, font = [], _font(ladder[0])
     if text:
-        for size in (30, 26, 22, 19, 16):
+        for size in ladder:
             font = _font(size)
             lines = _wrap(text, font, max_w, draw)
             if len(lines) <= 2:
                 break
         lines = lines[:3]
 
-    sub_font = _font(15)
+    sub_font = _font(max(11, int(round(15 * scale))))
     line_h = (font.size + 8) if lines else 0
     sub_h  = (sub_font.size + 6) if subtitle else 0
     y = max(6, (bar_h - (len(lines) * line_h + sub_h)) // 2)
@@ -83,9 +88,24 @@ def _build_overlay(w: int, bar_h: int, text: str, subtitle: str):
                   font=sub_font, fill=(150, 158, 170, 255))
 
     rgba = np.array(img)
-    bgr = cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2BGR)
-    alpha = (rgba[:, :, 3:4].astype(np.float32) / 255.0)
-    return bgr, alpha
+    a = rgba[:, :, 3]
+    rows = np.flatnonzero(a.any(axis=1))
+    cols = np.flatnonzero(a.any(axis=0))
+    if len(rows) == 0:                       # nothing drawn
+        return None
+    # Blend only the text's bounding box, not the whole bar. At 1080p the bar
+    # is 280x1920; the glyphs occupy a fraction of that, and the float blend
+    # dominated the 33.9ms per-frame cost.
+    y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    x0, x1 = int(cols[0]), int(cols[-1]) + 1
+    sub = rgba[y0:y1, x0:x1]
+    alpha = sub[:, :, 3:4].astype(np.float32) / 255.0
+    bgr = cv2.cvtColor(sub[:, :, :3], cv2.COLOR_RGB2BGR).astype(np.float32)
+    # Pre-multiply once so the per-frame path is a multiply plus an add.
+    # cv2 needs matching channel counts (it will not broadcast like numpy),
+    # and contiguous buffers, so expand alpha to 3 channels here.
+    inv = np.ascontiguousarray(np.repeat(1.0 - alpha, 3, axis=2))
+    return (y0, y1, x0, x1), np.ascontiguousarray(bgr * alpha), inv
 
 
 def _overlay(w: int, bar_h: int, text: str, subtitle: str):
@@ -111,7 +131,12 @@ def draw_caption(frame_bgr: np.ndarray, text: str, subtitle: str = "") -> np.nda
     dark = np.full_like(roi, (12, 14, 18))
     cv2.addWeighted(dark, BAR_ALPHA, roi, 1 - BAR_ALPHA, 0, dst=roi)
 
-    # Composite the cached text raster over it
-    text_bgr, alpha = _overlay(w, bar_h, text, subtitle)
-    roi[:] = (roi * (1 - alpha) + text_bgr * alpha).astype(np.uint8)
+    cached = _overlay(w, bar_h, text, subtitle)
+    if cached is None:
+        return out
+    (y0, y1, x0, x1), premult, inv_alpha = cached
+    patch = roi[y0:y1, x0:x1].astype(np.float32)
+    cv2.multiply(patch, inv_alpha, dst=patch)
+    cv2.add(patch, premult, dst=patch)
+    roi[y0:y1, x0:x1] = patch.astype(np.uint8)
     return out
