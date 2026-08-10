@@ -17,17 +17,21 @@ import numpy as np
 
 DEFAULT_EXPOSURE = -5      # 1/32s; measured 29.9 fps and twice the light of -6.
                            # -4 doubles light again but drops to 17 fps.
-DEFAULT_GAIN = 255         # Setting exposure manually also disables auto-gain,
+DEFAULT_GAIN = 200         # Setting exposure manually also disables auto-gain,
                            # leaving the sensor at minimum amplification — the
                            # cause of an almost black picture. Gain costs no
-                           # frame rate at all (29.9 fps at every level) and
-                           # took brightness 2.2 -> 63.3 of 255 here, about 11x
-                           # what auto-exposure managed in the same room.
-DEFAULT_BRIGHTNESS = 200   # Sits at 128 unless set. Raising it took mean
-                           # brightness 76 -> 152 of 255 at no frame-rate cost,
-                           # where the optical alternative (exposure -4) would
-                           # have halved the rate to 17 fps. 255 reaches ~200
-                           # but starts to wash out.
+                           # frame rate at all (29.9 fps at every level), but
+                           # amplifies noise with signal, so it is kept below
+                           # maximum and gamma does the rest.
+DEFAULT_BRIGHTNESS = 140   # This control is a black-level *offset*, so pushing
+                           # it high lifts blacks and flattens the picture: at
+                           # 200 the darkest 5% of pixels sat at 74/255 — grey,
+                           # not black — which reads as washed out. Kept near
+                           # the 128 default so blacks stay black.
+DEFAULT_GAMMA = 0.55       # Brightens midtones without lifting blacks, which
+                           # is what BRIGHTNESS cannot do. Measured against the
+                           # flat b200/g255 setup: same contrast, blacks back
+                           # near zero, and less grain. Costs 2.9ms at 1080p.
 DSHOW_MANUAL_EXPOSURE = 0.25   # CAP_PROP_AUTO_EXPOSURE value meaning "manual"
 
 
@@ -92,3 +96,15 @@ def thumbnail(frame: np.ndarray, height: int) -> np.ndarray:
     if scale >= 1:
         return frame
     return cv2.resize(frame, (int(frame.shape[1] * scale), height))
+
+
+def gamma_lut(gamma: float | None) -> np.ndarray | None:
+    """Lookup table for a gamma curve, or None for no correction.
+
+    Applied to the *output* frame only, never to what the detector sees: this
+    is a cosmetic change and the model should keep receiving the pixels its
+    training data resembled.
+    """
+    if not gamma or gamma == 1.0:
+        return None
+    return np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], np.uint8)
