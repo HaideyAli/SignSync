@@ -25,10 +25,14 @@ CALIB_PATH = Path("data/motion_calib.json")
 
 ENTER_MULT   = 2.0     # motion above rest*this starts a sign
 EXIT_MULT    = 1.5     # ...and must fall below rest*this to end it
-QUIET_FRAMES = 25      # sustained quiet needed to close a sign (~1.7s at 15fps).
-                       # Shorter values split a sign at mid-sign pauses.
-MIN_LEN      = 12      # shorter bursts are twitches, not signs
-MAX_LEN      = 90      # force-close after ~6s so a sign always ends
+# Durations, not frame counts. These were frame counts, which made every
+# threshold silently depend on the loop rate: at 15fps QUIET_FRAMES=25 meant
+# 1.7s, but the same constant at 30fps would mean 0.83s and split signs in
+# half. MediaPipe's speed varies with machine and load, so tie them to time.
+QUIET_SECS   = 1.7     # sustained quiet needed to close a sign
+MIN_SECS     = 0.8     # shorter bursts are twitches, not signs
+MAX_SECS     = 6.0     # force-close so a sign always ends
+DEFAULT_FPS  = 15.0    # used until the caller reports a measured rate
 FLOOR        = 0.15    # absolute floor so a perfectly still baseline can't
                        # make the entry threshold vanish
 
@@ -58,14 +62,16 @@ class SignSegmenter:
     """Feed frames; get back (start, end) indices the moment a sign completes."""
 
     def __init__(self, enter: float | None = None, exit_: float = EXIT_MULT,
-                 quiet_frames: int = QUIET_FRAMES, min_len: int = MIN_LEN,
-                 max_len: int = MAX_LEN, floor: float | None = None):
+                 quiet_secs: float = QUIET_SECS, min_secs: float = MIN_SECS,
+                 max_secs: float = MAX_SECS, floor: float | None = None,
+                 fps: float = DEFAULT_FPS):
         calib = load_calibration()
         enter = enter if enter is not None else calib.get("enter_mult", ENTER_MULT)
         floor = floor if floor is not None else calib.get("floor", FLOOR)
         self.enter, self.exit_ = enter, exit_
-        self.quiet_frames, self.min_len, self.max_len = quiet_frames, min_len, max_len
+        self.quiet_secs, self.min_secs, self.max_secs = quiet_secs, min_secs, max_secs
         self.floor = floor
+        self.fps = fps
         self.rest: float | None = None
         self.in_sign = False
         self.quiet = 0
@@ -91,11 +97,12 @@ class SignSegmenter:
         else:
             self.quiet = 0
 
-        too_long = index - self.start >= self.max_len
-        if self.quiet >= self.quiet_frames or too_long:
+        fps = max(self.fps, 1.0)
+        too_long = index - self.start >= self.max_secs * fps
+        if self.quiet >= self.quiet_secs * fps or too_long:
             self.in_sign = False
             end = index - (self.quiet if not too_long else 0)
-            return (self.start, end) if end - self.start >= self.min_len else None
+            return (self.start, end) if end - self.start >= self.min_secs * fps else None
         return None
 
     def reset(self) -> None:

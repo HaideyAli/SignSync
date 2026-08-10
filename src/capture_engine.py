@@ -141,6 +141,7 @@ class CaptureEngine:
                 self._refractory_until = now + REFRACTORY_S
                 self._next_capture_at = now + READY_GAP_S
         elif self.live and self.ready:
+            self.segmenter.fps = self.fps    # thresholds are durations, not frames
             span = self.segmenter.update(hand_motion(self._prev_lm, lm), self.frame_i)
             if span is not None:
                 frames = list(self.ring)
