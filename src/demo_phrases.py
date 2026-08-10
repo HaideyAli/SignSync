@@ -25,9 +25,22 @@ DEMO_PHRASES: dict[tuple[str, ...], str] = {
 }
 
 
+_LENGTHS = sorted({len(g) for g in DEMO_PHRASES}, reverse=True)
+
+
 def lookup(words: list[str]) -> str | None:
-    """Exact translation for a completed phrase, else None."""
-    return DEMO_PHRASES.get(tuple(w.lower() for w in words))
+    """Translation for a demo phrase at the END of the signed sequence.
+
+    Matching the tail rather than the whole list means a stray word earlier in
+    the session — a misrecognised sign, or a leftover from a previous
+    sentence — does not stop the phrase being recognised. Longest phrases are
+    tried first so TALL COUSIN PLAY BASKETBALL wins over the shorter
+    COUSIN PLAY BASKETBALL nested inside it."""
+    key = tuple(w.lower() for w in words)
+    for n in _LENGTHS:
+        if len(key) >= n and key[-n:] in DEMO_PHRASES:
+            return DEMO_PHRASES[key[-n:]]
+    return None
 
 
 def partial(words: list[str]) -> str | None:
@@ -35,11 +48,33 @@ def partial(words: list[str]) -> str | None:
 
     Without this the rules run on a half-signed phrase and produce something
     plainly wrong on camera — COUSIN PLAY renders as "I play cousin." before
-    resolving. Showing the gloss so far reads as in-progress instead."""
-    if not words:
-        return None
+    resolving. Showing the gloss so far reads as in-progress instead. Also
+    matched against the tail, for the same reason as lookup()."""
     key = tuple(w.lower() for w in words)
-    if any(g[:len(key)] == key and len(g) > len(key) for g in DEMO_PHRASES):
-        text = " ".join(words)
-        return text[0].upper() + text[1:] + "..."
+    # At least two words must be committed. A single trailing word starts
+    # several phrases, so a 1-word match would hijack complete sentences the
+    # rules handle fine — WHO DOCTOR would render "Doctor..." not
+    # "Who is the doctor?".
+    for n in range(min(len(key), max(_LENGTHS, default=0)), 1, -1):
+        tail = key[-n:]
+        if any(g[:n] == tail and len(g) > n for g in DEMO_PHRASES):
+            text = " ".join(words[-n:])
+            return text[0].upper() + text[1:] + "..."
     return None
+
+
+if __name__ == "__main__":
+    # A stray word earlier must not block the phrase; the longest phrase
+    # wins; and a 1-word tail must not hijack sentences the rules own.
+    assert lookup(["walk", "doctor", "help", "cousin"]) == \
+        DEMO_PHRASES[("doctor", "help", "cousin")]
+    assert lookup(["dog", "tall", "cousin", "play", "basketball"]) == \
+        DEMO_PHRASES[("tall", "cousin", "play", "basketball")]
+    assert lookup(["who", "doctor"]) is None
+    assert partial(["doctor", "help"]) == "Doctor help..."
+    assert partial(["junk", "doctor", "help"]) == "Doctor help..."
+    assert partial(["doctor"]) is None            # 1-word tail must not fire
+    assert partial(["who", "doctor"]) is None
+    for gloss, text in DEMO_PHRASES.items():
+        assert lookup(list(gloss)) == text
+    print(f"demo_phrases: {len(DEMO_PHRASES)} phrases + tail-matching checks passed")
