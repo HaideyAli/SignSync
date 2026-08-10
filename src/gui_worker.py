@@ -23,7 +23,6 @@ from virtual_cam import VirtualCam
 W, H = 640, 480       # must match extraction so landmark scale is consistent
 PREVIEW_FPS = 15.0    # on-screen only; the virtual camera gets every frame
 
-
 class InferenceWorker(QThread):
     # frames are numpy arrays — not in Qt's registered type table, so `object`
     frame_ready      = Signal(object)
@@ -65,7 +64,6 @@ class InferenceWorker(QThread):
             self._run()
         except Exception as e:
             self.error.emit(str(e))
-
     def _run(self) -> None:
         predictor = SignPredictor(self.checkpoint_path)
         engine = CaptureEngine()
@@ -129,7 +127,7 @@ class InferenceWorker(QThread):
 
     def _subtitle(self, engine: CaptureEngine) -> str:
         """Live mode shows only the signed words — the video feed is what the
-        meeting sees, so no cues or countdowns go on it."""
+        meeting sees, so no cues go on it."""
         if self.mode == "live":
             return self.session.subtitle
         if engine.is_recording:
@@ -146,8 +144,7 @@ class InferenceWorker(QThread):
         accepted, message = self.session.offer(results)
         if accepted:
             self.word_accepted.emit(*results[0])
-            # Sentence-so-far, immediately: tick() only fires after PAUSE_SECS
-            # of silence, so the panel would otherwise sit blank for seconds
-            # after a phrase completes while the video caption already shows it
+            # tick() only fires after a pause; without this the panel stays
+            # blank while the video caption already shows the phrase
             self.sentence_ready.emit(self.session.caption)
         self.status_changed.emit(message)
