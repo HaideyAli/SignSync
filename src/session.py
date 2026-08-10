@@ -9,11 +9,17 @@ window spreads probability across candidates.
 """
 import time
 
+from demo_phrases import partial
 from sentence_engine import assemble_sentence
 
 CONF_THRESHOLD = 0.80    # per CLAUDE.md
 MARGIN         = 0.25    # top-1 must beat top-2 by this much
-PAUSE_SECS     = 3.5     # silence after which the sentence is considered finished
+PAUSE_SECS     = 15.0    # silence after which the sentence is considered finished.
+                         # Must comfortably exceed the gap between two accepted
+                         # signs, which is 5-9s in practice: a ~4s capture plus
+                         # ~1.7s of quiet to close the segment plus the accept
+                         # cooldown. At 3.5s every word finalised as its own
+                         # one-word sentence, so a phrase never accumulated.
 ACCEPT_COOLDOWN_S = 0.5  # guards against a sign being offered twice in quick
                          # succession; kept short since segmentation already
                          # yields one evaluation per sign
@@ -89,6 +95,11 @@ class SignSession:
         if not self.words:
             return None
         if time.time() - self.last_word_at < self.pause_secs:
+            return None
+        # Never cut a scripted phrase in half. A four-word phrase can take 30s
+        # to sign, so any fixed timeout short enough to feel responsive would
+        # finalise mid-phrase and lose the words already signed.
+        if partial(self.words):
             return None
         sentence = assemble_sentence(self.words)
         self.finalized = sentence
