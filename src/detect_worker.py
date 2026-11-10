@@ -14,6 +14,7 @@ import time
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks.python import vision as mp_vision
 
 from camera import crop_4_3
@@ -39,6 +40,10 @@ class DetectorThread(threading.Thread):
         self.on_error = on_error or (lambda *_: None)
         self.running = False
         self.fps = 0.0
+        # Newest raw (258,) frame, published for overlay.draw_landmarks on the
+        # video thread. Plain attribute: a rebind is atomic under the GIL, and
+        # a lock here would stall detection behind rendering.
+        self.latest: np.ndarray | None = None
 
     def stop(self) -> None:
         self.running = False
@@ -66,6 +71,7 @@ class DetectorThread(threading.Thread):
                 rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
                 lm = landmarks_from_frame(
                     det.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)))
+                self.latest = lm
                 self.engine.push_frame(lm)
 
                 window = self.engine.poll_result()

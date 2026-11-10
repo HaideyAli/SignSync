@@ -17,11 +17,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from camera import (DEFAULT_BRIGHTNESS, DEFAULT_EXPOSURE, DEFAULT_GAIN,
-                    DEFAULT_GAMMA, gamma_lut, open_camera)
+                    open_camera)
+from tone import ToneMapper
 
 WIN = "SignBridge - camera tuning"
 DEFAULTS = {"gain": int(DEFAULT_GAIN), "brightness": int(DEFAULT_BRIGHTNESS),
-            "gamma x100": int(DEFAULT_GAMMA * 100), "-exposure": int(-DEFAULT_EXPOSURE)}
+            "gamma x100": 0, "-exposure": int(-DEFAULT_EXPOSURE)}
 
 
 def make_sliders():
@@ -37,7 +38,9 @@ def make_sliders():
 def read_sliders():
     g = cv2.getTrackbarPos("gain", WIN)
     b = cv2.getTrackbarPos("brightness", WIN)
-    gamma = max(cv2.getTrackbarPos("gamma x100", WIN), 10) / 100.0
+    # Slider below 10 means "let ToneMapper choose" — the app's default
+    pos = cv2.getTrackbarPos("gamma x100", WIN)
+    gamma = None if pos < 10 else pos / 100.0
     exp = -max(cv2.getTrackbarPos("-exposure", WIN), 1)
     return g, b, gamma, exp
 
@@ -56,6 +59,8 @@ def main():
         sys.exit("cannot open webcam")
     make_sliders()
 
+    # Same tone mapper the app uses, so this window previews the real output
+    tone = ToneMapper(None)          # auto, like the app
     prev = (None, None, None)
     fps, n, t0, last = 0.0, 0, time.time(), None
     while True:
@@ -70,20 +75,25 @@ def main():
         ok, frame = cap.read()
         if not ok:
             break
-        lut = gamma_lut(gamma)
-        shown = cv2.LUT(frame, lut) if lut is not None else frame
+        tone.gamma = gamma          # rebuilds the curve when the slider moves
+        shown = tone.apply(frame)
 
         n += 1
         if n % 10 == 0:
             now = time.time(); fps = 10 / max(1e-6, now - t0); t0 = now
 
-        f32 = shown.astype(np.float32)
+        # Stats on a thumbnail, not the full frame: full-frame percentiles cost
+        # ~60ms each and made this tool's own fps readout meaningless
+        f32 = cv2.resize(shown, (320, 180)).astype(np.float32)
         grain = 0.0 if last is None else float(np.abs(f32 - last).mean())
         last = f32
         view = cv2.flip(shown, 1).copy()
         mode = "AUTO exposure (~15fps)" if auto else f"manual exposure {exposure}"
         txt(view, f"{mode}   {fps:4.1f} fps", 30, (0, 255, 140), 0.7)
-        txt(view, f"gain {gain}  brightness {bright}  gamma {gamma:.2f}", 60)
+        lo, hi = tone.levels
+        gtag = f"{tone.effective_gamma:.2f}" + ("" if gamma is not None else " auto")
+        txt(view, f"gain {gain}  brightness {bright}  gamma {gtag}   "
+                  f"levels {lo:.0f}-{hi:.0f}", 60)
         txt(view, f"mean {f32.mean():5.1f}   contrast {f32.std():5.1f}   "
                   f"blacks {np.percentile(f32, 5):5.1f}   grain {grain:4.1f}", 88,
             (170, 200, 255), 0.55)
@@ -107,10 +117,12 @@ def main():
                 cv2.setTrackbarPos(name, WIN, val)
         if key == ord("s"):
             expo = "auto" if auto else str(exposure)
+            # gamma is omitted when the slider is on auto — that is the default
+            gtxt = "" if gamma is None else f" --gamma {gamma:.2f}"
             print("\n  python src/gui_app.py --checkpoint "
                   "checkpoints/best_model_transformer_50_v10.pth \\")
             print(f"      --exposure {expo} --gain {gain} "
-                  f"--brightness {bright} --gamma {gamma:.2f}\n", flush=True)
+                  f"--brightness {bright}{gtxt}\n", flush=True)
 
     cap.release()
     cv2.destroyAllWindows()

@@ -1,15 +1,15 @@
-"""Draws the caption bar onto a webcam frame.
+"""Draws the caption text onto a webcam frame.
 
-Uses Pillow with a real TrueType face rather than cv2.putText's Hershey
-fonts, which look blocky on a video call.
+Pillow with a real TrueType face, not cv2.putText's blocky Hershey fonts.
+No panel sits behind the text — it is drawn straight onto the video, so an
+outline on each glyph carries the contrast instead.
 
-Text is rasterised to a transparent overlay and cached, because a full
-numpy->PIL->numpy round-trip per frame at 30fps saturates the capture
-thread. Only a caption *change* costs a re-render; steady-state frames pay
-one darken plus one alpha composite over the bar region.
+Sentence and subtitle rasterise to one cached RGBA image cropped to the
+glyphs' bounding box: a caption change costs a re-render, every other frame
+costs one multiply plus one add over that box.
 
-All BGR<->RGB conversion is confined to this module so there is one place
-for the channel order to be wrong, not several.
+BGR<->RGB conversion is confined to this module, so there is one place for the
+channel order to be wrong rather than several.
 """
 from pathlib import Path
 
@@ -18,29 +18,33 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 _FONT_CANDIDATES = [
+    "C:/Windows/Fonts/segoeuib.ttf",           # semibold reads better on video
     "C:/Windows/Fonts/segoeui.ttf",
-    "C:/Windows/Fonts/arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ]
 
-BAR_HEIGHT_FRAC = 0.26     # bottom slice of the frame the caption bar occupies
-BAR_ALPHA       = 0.62
+COL_W_FRAC    = 0.82     # text column width as a fraction of the frame
+MARGIN_FRAC   = 0.045    # gap between text and the bottom edge
+TEXT_COLOUR   = (245, 247, 250, 255)
+SUB_COLOUR    = (150, 205, 255, 255)
+# White text vanishes against a bright wall; the outline is what broadcast
+# subtitles use, and it bakes into the cached raster so it costs nothing.
+STROKE_COLOUR = (0, 0, 0, 205)
+STROKE_FRAC   = 0.085    # outline width relative to the font size
 _font_cache: dict[int, ImageFont.FreeTypeFont] = {}
-_overlay_cache: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+_cache: dict[tuple, tuple | None] = {}
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
     if size not in _font_cache:
-        for path in _FONT_CANDIDATES:
-            if Path(path).exists():
-                _font_cache[size] = ImageFont.truetype(path, size)
-                break
-        else:
-            _font_cache[size] = ImageFont.load_default()
+        path = next((p for p in _FONT_CANDIDATES if Path(p).exists()), None)
+        _font_cache[size] = (ImageFont.truetype(path, size) if path
+                             else ImageFont.load_default())
     return _font_cache[size]
 
 
-def _wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int, draw: ImageDraw.ImageDraw) -> list[str]:
+def _wrap(text: str, font, max_w: int, draw) -> list[str]:
     words, lines, cur = text.split(), [], ""
     for w in words:
         trial = f"{cur} {w}".strip()
@@ -54,89 +58,91 @@ def _wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int, draw: ImageDraw.I
     return lines
 
 
-def _build_overlay(w: int, bar_h: int, text: str, subtitle: str):
-    """Rasterise the caption text once into (bgr, alpha) strips of the bar."""
-    img = Image.new("RGBA", (w, bar_h), (0, 0, 0, 0))
+def _text(draw, col_w: int, y: float, s: str, font, fill) -> None:
+    """One centred, outlined line; Pillow strokes the outline itself, which
+    beats drawing the string repeatedly at offsets."""
+    draw.text(((col_w - draw.textlength(s, font=font)) / 2, y), s,
+              font=font, fill=fill, stroke_fill=STROKE_COLOUR,
+              stroke_width=max(1, round(font.size * STROKE_FRAC)))
+
+
+def _fit(text: str, ladder: list[int], max_w: int, draw):
+    """Largest size from the ladder that wraps to at most two lines."""
+    font, lines = _font(ladder[0]), []
+    for size in ladder:
+        font = _font(size)
+        lines = _wrap(text, font, max_w, draw)
+        if len(lines) <= 2:
+            break
+    return font, lines[:3]
+
+
+def _build(w: int, h: int, text: str, subtitle: str):
+    """Rasterise the text, returning (box, premultiplied_bgr, inv_alpha)."""
+    scale = h / 720.0                       # sizes tuned at 720p
+    pad = int(28 * scale)
+    col_w = int(w * COL_W_FRAC)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+    ladder = [max(12, int(s * scale)) for s in (44, 38, 33, 28, 24)]
+    font, lines = (_fit(text, ladder, col_w - 2 * pad, probe) if text
+                   else (_font(ladder[0]), []))
+    sub_font = _font(max(11, int(21 * scale)))
+
+    line_h = int(font.size * 1.28)
+    sub_h = int(sub_font.size * 1.5) if subtitle else 0
+    col_h = max(int(64 * scale), len(lines) * line_h + sub_h + 2 * pad)
+
+    img = Image.new("RGBA", (col_w, col_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    margin, max_w = int(w * 0.05), w - 2 * int(w * 0.05)
-
-    # Sizes are relative to frame height, not fixed pixels: the ladder was
-    # tuned at 480p and would render illegibly small on a 1080p feed.
-    scale = bar_h / (480 * BAR_HEIGHT_FRAC)
-    ladder = [max(11, int(round(s * scale))) for s in (30, 26, 22, 19, 16)]
-
-    lines, font = [], _font(ladder[0])
-    if text:
-        for size in ladder:
-            font = _font(size)
-            lines = _wrap(text, font, max_w, draw)
-            if len(lines) <= 2:
-                break
-        lines = lines[:3]
-
-    sub_font = _font(max(11, int(round(15 * scale))))
-    line_h = (font.size + 8) if lines else 0
-    sub_h  = (sub_font.size + 6) if subtitle else 0
-    y = max(6, (bar_h - (len(lines) * line_h + sub_h)) // 2)
-
+    y = pad
     for line in lines:
-        draw.text(((w - draw.textlength(line, font=font)) / 2, y), line,
-                  font=font, fill=(255, 255, 255, 255))
+        _text(draw, col_w, y, line, font, TEXT_COLOUR)
         y += line_h
     if subtitle:
-        draw.text(((w - draw.textlength(subtitle, font=sub_font)) / 2, y), subtitle,
-                  font=sub_font, fill=(150, 158, 170, 255))
+        _text(draw, col_w, y + int(4 * scale), subtitle, sub_font, SUB_COLOUR)
 
+    # Blend only the glyphs' box: with no background most of this image is
+    # transparent, and blending it would be a no-op over a large area.
     rgba = np.array(img)
     a = rgba[:, :, 3]
-    rows = np.flatnonzero(a.any(axis=1))
-    cols = np.flatnonzero(a.any(axis=0))
-    if len(rows) == 0:                       # nothing drawn
+    rows, cols = np.flatnonzero(a.any(axis=1)), np.flatnonzero(a.any(axis=0))
+    if len(rows) == 0:                           # nothing drawn
         return None
-    # Blend only the text's bounding box, not the whole bar. At 1080p the bar
-    # is 280x1920; the glyphs occupy a fraction of that, and the float blend
-    # dominated the 33.9ms per-frame cost.
-    y0, y1 = int(rows[0]), int(rows[-1]) + 1
-    x0, x1 = int(cols[0]), int(cols[-1]) + 1
-    sub = rgba[y0:y1, x0:x1]
+    ry0, ry1 = int(rows[0]), int(rows[-1]) + 1
+    cx0, cx1 = int(cols[0]), int(cols[-1]) + 1
+    sub = rgba[ry0:ry1, cx0:cx1]
+
+    x0, y0 = (w - col_w) // 2, max(0, h - col_h - int(h * MARGIN_FRAC))
     alpha = sub[:, :, 3:4].astype(np.float32) / 255.0
     bgr = cv2.cvtColor(sub[:, :, :3], cv2.COLOR_RGB2BGR).astype(np.float32)
-    # Pre-multiply once so the per-frame path is a multiply plus an add.
-    # cv2 needs matching channel counts (it will not broadcast like numpy),
-    # and contiguous buffers, so expand alpha to 3 channels here.
+    # Pre-multiply once so the per-frame path is a multiply plus an add. cv2
+    # will not broadcast like numpy, so alpha is expanded to 3 channels here.
     inv = np.ascontiguousarray(np.repeat(1.0 - alpha, 3, axis=2))
-    return (y0, y1, x0, x1), np.ascontiguousarray(bgr * alpha), inv
+    return ((y0 + ry0, y0 + ry1, x0 + cx0, x0 + cx1),
+            np.ascontiguousarray(bgr * alpha), inv)
 
 
-def _overlay(w: int, bar_h: int, text: str, subtitle: str):
-    key = (w, bar_h, text, subtitle)
-    if key not in _overlay_cache:
-        if len(_overlay_cache) > 32:          # bounded: captions change constantly
-            _overlay_cache.clear()
-        _overlay_cache[key] = _build_overlay(w, bar_h, text, subtitle)
-    return _overlay_cache[key]
+def _cached(w: int, h: int, text: str, subtitle: str):
+    key = (w, h, text, subtitle)
+    if key not in _cache:
+        if len(_cache) > 24:                     # bounded: captions change constantly
+            _cache.clear()
+        _cache[key] = _build(w, h, text, subtitle)
+    return _cache[key]
 
 
 def draw_caption(frame_bgr: np.ndarray, text: str, subtitle: str = "") -> np.ndarray:
-    """Return a copy of the frame with a translucent caption bar at the bottom."""
+    """Composite the caption text onto the frame, in place."""
     if not text and not subtitle:
         return frame_bgr
-
     h, w = frame_bgr.shape[:2]
-    bar_h = int(h * BAR_HEIGHT_FRAC)
-    out = frame_bgr.copy()
-    roi = out[h - bar_h:h]
-
-    # Darken the bar region (cheap, in-place)
-    dark = np.full_like(roi, (12, 14, 18))
-    cv2.addWeighted(dark, BAR_ALPHA, roi, 1 - BAR_ALPHA, 0, dst=roi)
-
-    cached = _overlay(w, bar_h, text, subtitle)
-    if cached is None:
-        return out
+    cached = _cached(w, h, text, subtitle)
+    if cached is None:                           # whitespace-only caption
+        return frame_bgr
     (y0, y1, x0, x1), premult, inv_alpha = cached
-    patch = roi[y0:y1, x0:x1].astype(np.float32)
-    cv2.multiply(patch, inv_alpha, dst=patch)
-    cv2.add(patch, premult, dst=patch)
-    roi[y0:y1, x0:x1] = patch.astype(np.uint8)
-    return out
+    roi = frame_bgr[y0:y1, x0:x1].astype(np.float32)
+    cv2.multiply(roi, inv_alpha, dst=roi)
+    cv2.add(roi, premult, dst=roi)
+    frame_bgr[y0:y1, x0:x1] = roi.astype(np.uint8)
+    return frame_bgr

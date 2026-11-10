@@ -9,6 +9,7 @@ import argparse
 import sys
 
 import cv2
+import overlay
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QMainWindow
@@ -20,9 +21,9 @@ from theme import DARK_QSS
 
 class MainWindow(QMainWindow):
     def __init__(self, checkpoint: str, camera: int, mode: str, use_vcam: bool,
-                 width: int = 1920, height: int = 1080, fps: float = 30.0,
+                 width: int = 1280, height: int = 720, fps: float = 30.0,
                  exposure: float | None = -5.0, gain: float | None = 220.0,
-                 brightness: float | None = 128.0, gamma: float | None = 0.80):
+                 brightness: float | None = 128.0, gamma: float | None = None):
         super().__init__()
         self.setWindowTitle("SignBridge")
         # Stays above other apps including Zoom — the point of a companion panel
@@ -105,8 +106,14 @@ def main() -> None:
                    help="live: sign freely, words appear (default); cycle: sign "
                         "to a countdown; manual: one sign per button press")
     p.add_argument("--no-vcam", action="store_true", help="window only, no virtual camera")
-    p.add_argument("--width",  type=int, default=1920)
-    p.add_argument("--height", type=int, default=1080)
+    p.add_argument("--no-skeleton", action="store_true",
+                   help="hide the hand landmark overlay")
+    p.add_argument("--no-pose", action="store_true",
+                   help="hands only, without the shoulder and arm skeleton")
+    # 720p: nothing downstream wants more (detector takes 640x480, vcam
+    # publishes 720p), and 1080p cost 6.2ms/frame extra plus a vcam resize.
+    p.add_argument("--width",  type=int, default=1280)
+    p.add_argument("--height", type=int, default=720)
     p.add_argument("--fps",    type=float, default=30.0)
     # Auto-exposure is what pins the camera to 15fps (exposure -4 = 1/16s);
     # a fixed shutter unlocks 30 but needs decent light. "auto" restores it.
@@ -118,10 +125,16 @@ def main() -> None:
     # Doubles brightness for free; the optical route (--exposure -4) halves fps
     p.add_argument("--brightness", type=float, default=128.0,
                    help="camera black level 0-255; high values wash the picture out")
-    p.add_argument("--gamma", type=float, default=0.80,
-                   help="output tone curve; lower is brighter, keeps blacks black")
+    # Levels and midtones are both measured every ~0.5s (see tone.py). Passing
+    # a value pins the midtone curve; 0 turns tone mapping off completely.
+    p.add_argument("--gamma", type=float, default=None,
+                   help="pin the midtone curve (default: automatic); 0 disables")
     args = p.parse_args()
     exposure = None if str(args.exposure).lower() == "auto" else float(args.exposure)
+    # Module-level rather than another constructor argument: the worker is at
+    # the 150-line limit and this is a pure render toggle it never inspects.
+    overlay.ENABLED = not args.no_skeleton
+    overlay.POSE = not args.no_pose
 
     app = QApplication(sys.argv)
     app.setStyleSheet(DARK_QSS)

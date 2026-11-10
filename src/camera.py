@@ -29,11 +29,15 @@ DEFAULT_BRIGHTNESS = 128   # This control is a black-level *offset*, so pushing
                            # not black — which reads as a milky haze over the
                            # whole picture. Left at the neutral default so
                            # blacks stay black; gamma does the brightening.
-DEFAULT_GAMMA = 0.80       # Brightens midtones without lifting blacks, which
-                           # is what BRIGHTNESS cannot do. Measured at 1080p
-                           # against b140/g200/0.55: contrast 52.6 -> 59.9 and
-                           # blacks 53 -> 5, at the same grain and frame rate.
-                           # Costs 2.9ms.
+DEFAULT_GAMMA = 0.90       # Shapes midtones *after* tone.ToneMapper has
+                           # stretched the frame's own black/white points to
+                           # full range, so it no longer has to do the
+                           # brightening alone. A fixed 0.80 curve was lifting
+                           # true black from 17 to 48 — the milky picture this
+                           # file kept chasing. Measured with the adaptive
+                           # stretch: contrast 67.4 -> 77.6, blacks 48 -> 21,
+                           # whites reaching a full 255. 0.75 is brighter but
+                           # gives back half the contrast (73.4, blacks 32).
 DSHOW_MANUAL_EXPOSURE = 0.25   # CAP_PROP_AUTO_EXPOSURE value meaning "manual"
 
 
@@ -100,13 +104,5 @@ def thumbnail(frame: np.ndarray, height: int) -> np.ndarray:
     return cv2.resize(frame, (int(frame.shape[1] * scale), height))
 
 
-def gamma_lut(gamma: float | None) -> np.ndarray | None:
-    """Lookup table for a gamma curve, or None for no correction.
-
-    Applied to the *output* frame only, never to what the detector sees: this
-    is a cosmetic change and the model should keep receiving the pixels its
-    training data resembled.
-    """
-    if not gamma or gamma == 1.0:
-        return None
-    return np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], np.uint8)
+# Tone mapping lives in tone.py — a fixed gamma curve could not serve both a
+# dark room and a bright one, so it is now measured per-frame. See ToneMapper.

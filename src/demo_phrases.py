@@ -13,7 +13,7 @@ every word used below scores 100% on the personal recordings.
 
 DEMO_PHRASES: dict[tuple[str, ...], str] = {
     ("cousin", "play", "basketball"):           "The cousin plays basketball.",
-    ("doctor", "help", "cousin"):               "The doctor helps the cousin.",
+    ("doctor", "help", "woman"):                "The doctor helps the woman.",
     ("cousin", "walk", "later"):                "The cousin will walk later.",
     ("doctor", "go", "thursday"):               "The doctor will go on Thursday.",
     ("tall", "cousin", "play", "basketball"):   "The tall cousin plays basketball.",
@@ -66,8 +66,8 @@ def partial(words: list[str]) -> str | None:
 if __name__ == "__main__":
     # A stray word earlier must not block the phrase; the longest phrase
     # wins; and a 1-word tail must not hijack sentences the rules own.
-    assert lookup(["walk", "doctor", "help", "cousin"]) == \
-        DEMO_PHRASES[("doctor", "help", "cousin")]
+    assert lookup(["walk", "doctor", "help", "woman"]) == \
+        DEMO_PHRASES[("doctor", "help", "woman")]
     assert lookup(["dog", "tall", "cousin", "play", "basketball"]) == \
         DEMO_PHRASES[("tall", "cousin", "play", "basketball")]
     assert lookup(["who", "doctor"]) is None

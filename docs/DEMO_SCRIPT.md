@@ -76,7 +76,7 @@ snaps to the full sentence on the final word.
 | Sign in order | Caption produced |
 |---|---|
 | COUSIN → PLAY → BASKETBALL | The cousin plays basketball. |
-| DOCTOR → HELP → COUSIN | The doctor helps the cousin. |
+| DOCTOR → HELP → WOMAN | The doctor helps the woman. |
 | COUSIN → WALK → LATER | The cousin will walk later. |
 | DOCTOR → GO → THURSDAY | The doctor will go on Thursday. |
 | TALL → COUSIN → PLAY → BASKETBALL | The tall cousin plays basketball. |
@@ -110,7 +110,7 @@ does not mark them — "I give letter", not an invented "a letter".
 
 ## If a word is misread
 
-The app is deliberately conservative: a word is only accepted at ≥80%
+The app is deliberately conservative: a word is only accepted at ≥75%
 confidence *and* a clear margin over the runner-up, so ambiguous windows are
 dropped rather than inserted. The subtitle line tells you when something was
 rejected and why.
