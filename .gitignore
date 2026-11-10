@@ -1,7 +1,3 @@
-# Claude (local only — never commit)
-CLAUDE.md
-.claude/
-
 # Virtual environment
 .venv/
 

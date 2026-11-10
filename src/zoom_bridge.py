@@ -1,6 +1,6 @@
 """Sends a finalized sentence toward the live meeting caption feed.
 
-CLAUDE.md's original name (send_to_zoom_chat) implies Zoom's chat API, but
+The original name (send_to_zoom_chat) implies Zoom's chat API, but
 the actual mechanism for third-party live captions is different: the
 meeting host enables "Use a third-party closed captioning service" in
 Zoom's in-meeting settings, which generates a per-meeting URL of the form

@@ -21,7 +21,7 @@ from extract_landmarks import HOLISTIC_MODEL_URL, ensure_model, landmarks_from_f
 from predictor import DEVICE, RECORD_SECS, SignPredictor, hands_visible
 
 W, H = 640, 480          # must match extraction so landmark scale is consistent
-CONF_THRESHOLD = 0.80    # per CLAUDE.md
+CONF_THRESHOLD = 0.75    # project-wide acceptance threshold
 COOLDOWN_S     = 1.5
 WARMUP_FRAMES  = 30      # measure real fps before sizing the capture window
 

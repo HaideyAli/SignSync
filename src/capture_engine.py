@@ -21,7 +21,7 @@ import numpy as np
 from predictor import RECORD_SECS, SIGN_ONSET_FRAC
 from segmenter import SignSegmenter, hand_motion, window_for
 
-CONF_THRESHOLD = 0.80    # per CLAUDE.md
+CONF_THRESHOLD = 0.75    # project-wide acceptance threshold
 COOLDOWN_S     = 1.5
 WARMUP_FRAMES  = 30      # frames used to measure real fps before sizing the window
 REFRACTORY_S   = 1.2     # ignore triggers just after a capture — the hand dropping

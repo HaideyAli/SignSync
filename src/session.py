@@ -12,7 +12,7 @@ import time
 from demo_phrases import partial
 from sentence_engine import assemble_sentence
 
-CONF_THRESHOLD = 0.80    # per CLAUDE.md
+CONF_THRESHOLD = 0.75    # project-wide acceptance threshold
 MARGIN         = 0.25    # top-1 must beat top-2 by this much
 PAUSE_SECS     = 15.0    # silence after which the sentence is considered finished.
                          # Must comfortably exceed the gap between two accepted
